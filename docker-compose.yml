@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: momo-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: momo_user
+      POSTGRES_PASSWORD: momo_pass
+      POSTGRES_DB: momo_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - momo_pgdata:/var/lib/postgresql/data
+
+volumes:
+  momo_pgdata:
