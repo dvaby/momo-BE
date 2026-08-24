@@ -26,6 +26,7 @@ type ProcessResponseData struct {
 }
 
 type ProcessResponse struct {
-	Success bool                 `json:"success"`
-	Data    ProcessResponseData  `json:"data"`
+	Success bool                `json:"success"`
+	Message string              `json:"message,omitempty"`
+	Data    ProcessResponseData `json:"data"`
 }

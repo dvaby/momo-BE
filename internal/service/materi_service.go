@@ -29,11 +29,15 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		return nil, fmt.Errorf("gagal memproses lewat AI Service: %w", err)
 	}
 
-	if !aiResponse.Success {
-		return nil, fmt.Errorf("AI Service gagal memproses teks")
+		if !aiResponse.Success {
+		errMsg := "AI Service gagal memproses teks"
+		if aiResponse.Message != "" {
+			errMsg = aiResponse.Message
+		}
+		return nil, fmt.Errorf(errMsg)
 	}
 
-	var materiList []model.Materi
+		var materiList []model.Materi
 	for _, item := range aiResponse.Data.Materi {
 		materiList = append(materiList, model.Materi{
 			ModulID: modulID,
@@ -41,6 +45,10 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 			Judul:   item.Judul,
 			Konten:  item.Konten,
 		})
+	}
+
+	if len(materiList) == 0 {
+		return nil, fmt.Errorf("AI Service tidak menemukan konten materi yang valid dari PDF ini — pastikan PDF berisi materi pembelajaran, bukan soal")
 	}
 
 	err = s.repo.CreateBatch(materiList)

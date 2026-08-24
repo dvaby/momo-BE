@@ -26,6 +26,10 @@ func main() {
 	materiService := service.NewMateriService(materiRepo, aiClient)
 	materiHandler := handler.NewMateriHandler(materiService)
 
-	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler)
+	soalRepo := repository.NewSoalRepository(db)
+	soalService := service.NewSoalService(soalRepo, aiClient)
+	soalHandler := handler.NewSoalHandler(soalService)
+
+	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler)
 	r.Run(":" + cfg.ServerPort)
 }
