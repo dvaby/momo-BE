@@ -7,11 +7,14 @@ import (
 	"momo-be/internal/repository"
 	"momo-be/internal/router"
 	"momo-be/internal/service"
+	"momo-be/pkg/aiclient"
 )
 
 func main() {
 	cfg := config.LoadConfig()
 	db := database.Connect(cfg)
+
+	aiClient := aiclient.NewClient(cfg.AIServiceURL)
 
 	modulRepo := repository.NewModulRepository(db)
 	modulService := service.NewModulService(modulRepo)
@@ -19,6 +22,10 @@ func main() {
 
 	uploadHandler := handler.NewUploadHandler()
 
-	r := router.SetupRouter(modulHandler, uploadHandler)
+	materiRepo := repository.NewMateriRepository(db)
+	materiService := service.NewMateriService(materiRepo, aiClient)
+	materiHandler := handler.NewMateriHandler(materiService)
+
+	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler)
 	r.Run(":" + cfg.ServerPort)
 }

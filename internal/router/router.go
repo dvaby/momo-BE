@@ -6,7 +6,7 @@ import (
 	"momo-be/internal/handler"
 )
 
-func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.UploadHandler) *gin.Engine {
+func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.UploadHandler, materiHandler *handler.MateriHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -18,6 +18,7 @@ func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.Uplo
 		api.POST("/modul", modulHandler.CreateModul)
 		api.GET("/modul", modulHandler.GetAllModul)
 		api.GET("/modul/:id", modulHandler.GetModulByID)
+		api.POST("/modul/:id/materi", materiHandler.UploadMateri)
 
 		api.POST("/test-extract-pdf", uploadHandler.TestExtractPDF)
 	}
