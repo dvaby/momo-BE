@@ -29,7 +29,7 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		return nil, fmt.Errorf("gagal memproses lewat AI Service: %w", err)
 	}
 
-		if !aiResponse.Success {
+	if !aiResponse.Success {
 		errMsg := "AI Service gagal memproses teks"
 		if aiResponse.Message != "" {
 			errMsg = aiResponse.Message
@@ -37,7 +37,7 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		return nil, fmt.Errorf(errMsg)
 	}
 
-		var soalList []model.Soal
+	var soalList []model.Soal
 	for _, item := range aiResponse.Data.Soal {
 		soalList = append(soalList, model.Soal{
 			ModulID:      modulID,
@@ -61,4 +61,8 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	}
 
 	return soalList, nil
+}
+
+func (s *SoalService) GetSoalByModulAndJenis(modulID uint, jenis model.JenisSoal) ([]model.Soal, error) {
+	return s.repo.FindByModulAndJenis(modulID, jenis)
 }

@@ -20,6 +20,7 @@ func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.Uplo
 		api.GET("/modul/:id", modulHandler.GetModulByID)
 		api.POST("/modul/:id/materi", materiHandler.UploadMateri)
 		api.POST("/modul/:id/soal", soalHandler.UploadSoal)
+		api.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 
 		api.POST("/test-extract-pdf", uploadHandler.TestExtractPDF)
 	}

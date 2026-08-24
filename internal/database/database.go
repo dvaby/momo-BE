@@ -23,7 +23,7 @@ func Connect(cfg *config.Config) *gorm.DB {
 	}
 	log.Println("Berhasil konek ke database PostgreSQL!")
 
-	err = db.AutoMigrate(&model.Modul{}, &model.Materi{}, &model.Soal{})
+	err = db.AutoMigrate(&model.Modul{}, &model.Materi{}, &model.Soal{}, &model.Kelas{}, &model.Siswa{})
 	if err != nil {
 		log.Fatalf("Gagal melakukan migration: %v", err)
 	}

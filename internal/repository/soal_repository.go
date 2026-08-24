@@ -20,3 +20,9 @@ func (r *SoalRepository) CreateBatch(soalList []model.Soal) error {
 	}
 	return r.db.Create(&soalList).Error
 }
+
+func (r *SoalRepository) FindByModulAndJenis(modulID uint, jenis model.JenisSoal) ([]model.Soal, error) {
+	var soalList []model.Soal
+	err := r.db.Where("modul_id = ? AND jenis = ?", modulID, jenis).Find(&soalList).Error
+	return soalList, err
+}

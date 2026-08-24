@@ -75,3 +75,41 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		"data":    soalList,
 	})
 }
+
+func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
+	modulIDParam := c.Param("id")
+	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	jenisParam := c.Query("jenis")
+	jenis := model.JenisSoal(jenisParam)
+	if jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		return
+	}
+
+	soalList, err := h.service.GetSoalByModulAndJenis(uint(modulID), jenis)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data soal"})
+		return
+	}
+
+	if len(soalList) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Belum ada soal untuk modul dan jenis ini"})
+		return
+	}
+
+	responseData := make([]SoalSiswaResponse, 0, len(soalList))
+	for _, soal := range soalList {
+		responseData = append(responseData, ToSoalSiswaResponse(soal))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jenis":  jenis,
+		"jumlah": len(responseData),
+		"data":   responseData,
+	})
+}
