@@ -34,6 +34,10 @@ func main() {
 	kelasService := service.NewKelasService(kelasRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
 
-	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler, kelasHandler)
+	siswaRepo := repository.NewSiswaRepository(db)
+	siswaService := service.NewSiswaService(siswaRepo, kelasRepo)
+	siswaHandler := handler.NewSiswaHandler(siswaService)
+
+		r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler, kelasHandler, siswaHandler)
 	r.Run(":" + cfg.ServerPort)
 }
