@@ -51,3 +51,31 @@ func (c *Client) ProcessText(tipe string, teksMentah string) (*ProcessResponse, 
 
 	return &result, nil
 }
+
+// EvaluateAnswer mengirim pertanyaan, pilihan, kunci jawaban, dan jawaban
+// mentah siswa (hasil STT) ke AI Service untuk dinilai. Dipanggil dari
+// SoalService/JawabanService saat siswa submit jawaban.
+func (c *Client) EvaluateAnswer(req EvaluateRequest) (*EvaluateResponse, error) {
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("gagal encode request: %w", err)
+	}
+
+	url := c.baseURL + "/evaluate"
+	resp, err := c.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("gagal menghubungi AI Service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("AI Service merespons dengan status %d", resp.StatusCode)
+	}
+
+	var result EvaluateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("gagal decode response AI Service: %w", err)
+	}
+
+	return &result, nil
+}

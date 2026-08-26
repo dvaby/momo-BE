@@ -26,3 +26,16 @@ func (r *SoalRepository) FindByModulAndJenis(modulID uint, jenis model.JenisSoal
 	err := r.db.Where("modul_id = ? AND jenis = ?", modulID, jenis).Find(&soalList).Error
 	return soalList, err
 }
+
+// FindByID mengambil 1 soal lengkap (termasuk kunci_jawaban) berdasarkan
+// ID-nya. Dipakai internal oleh JawabanSiswaService untuk menyusun
+// request evaluasi ke AI Service — TIDAK boleh dipakai untuk endpoint
+// yang diakses langsung oleh siswa, karena ini membawa kunci_jawaban.
+func (r *SoalRepository) FindByID(id uint) (*model.Soal, error) {
+	var soal model.Soal
+	err := r.db.First(&soal, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &soal, nil
+}

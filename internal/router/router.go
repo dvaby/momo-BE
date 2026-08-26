@@ -7,7 +7,7 @@ import (
 	"momo-be/internal/middleware"
 )
 
-func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.UploadHandler, materiHandler *handler.MateriHandler, soalHandler *handler.SoalHandler, kelasHandler *handler.KelasHandler, siswaHandler *handler.SiswaHandler) *gin.Engine {
+func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.UploadHandler, materiHandler *handler.MateriHandler, soalHandler *handler.SoalHandler, kelasHandler *handler.KelasHandler, siswaHandler *handler.SiswaHandler, jawabanSiswaHandler *handler.JawabanSiswaHandler) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -24,6 +24,7 @@ func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.Uplo
 		api.GET("/modul/:id/soal", middleware.AuthMiddleware(), soalHandler.GetSoalByModul)
 		api.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 		api.POST("/join", siswaHandler.JoinSiswa)
+		api.POST("/submit-jawaban", middleware.AuthMiddleware(), jawabanSiswaHandler.SubmitJawaban)
 
 		api.POST("/kelas", kelasHandler.CreateKelas)
 		api.GET("/kelas/:id", kelasHandler.GetKelasByID)

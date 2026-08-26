@@ -38,6 +38,10 @@ func main() {
 	siswaService := service.NewSiswaService(siswaRepo, kelasRepo)
 	siswaHandler := handler.NewSiswaHandler(siswaService)
 
-		r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler, kelasHandler, siswaHandler)
+	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
+	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, aiClient)
+	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService)
+
+	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler, kelasHandler, siswaHandler, jawabanSiswaHandler)
 	r.Run(":" + cfg.ServerPort)
 }
