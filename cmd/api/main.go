@@ -30,6 +30,10 @@ func main() {
 	soalService := service.NewSoalService(soalRepo, aiClient)
 	soalHandler := handler.NewSoalHandler(soalService)
 
-	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler)
+	kelasRepo := repository.NewKelasRepository(db)
+	kelasService := service.NewKelasService(kelasRepo)
+	kelasHandler := handler.NewKelasHandler(kelasService)
+
+	r := router.SetupRouter(modulHandler, uploadHandler, materiHandler, soalHandler, kelasHandler)
 	r.Run(":" + cfg.ServerPort)
 }
