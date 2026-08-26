@@ -22,6 +22,7 @@ func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.Uplo
 		api.POST("/modul/:id/soal", soalHandler.UploadSoal)
 		api.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 		api.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
+			api.POST("/join", siswaHandler.JoinSiswa)
 
 		api.POST("/kelas", kelasHandler.CreateKelas)
 		api.GET("/kelas/:id", kelasHandler.GetKelasByID)
