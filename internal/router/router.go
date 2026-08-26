@@ -7,7 +7,17 @@ import (
 	"momo-be/internal/middleware"
 )
 
-func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.UploadHandler, materiHandler *handler.MateriHandler, soalHandler *handler.SoalHandler, kelasHandler *handler.KelasHandler, siswaHandler *handler.SiswaHandler, jawabanSiswaHandler *handler.JawabanSiswaHandler) *gin.Engine {
+func SetupRouter(
+	modulHandler *handler.ModulHandler,
+	uploadHandler *handler.UploadHandler,
+	materiHandler *handler.MateriHandler,
+	soalHandler *handler.SoalHandler,
+	kelasHandler *handler.KelasHandler,
+	siswaHandler *handler.SiswaHandler,
+	jawabanSiswaHandler *handler.JawabanSiswaHandler,
+	nilaiHandler *handler.NilaiHandler,
+	guruHandler *handler.GuruHandler, // <--- TAMBAHAN: Inject GuruHandler
+) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
@@ -16,20 +26,38 @@ func SetupRouter(modulHandler *handler.ModulHandler, uploadHandler *handler.Uplo
 
 	api := r.Group("/api/v1")
 	{
-		api.POST("/modul", modulHandler.CreateModul)
+		// --- Public Routes Guru (Auth) ---
+		api.POST("/guru/register", guruHandler.Register)
+		api.POST("/guru/login", guruHandler.Login)
+
+		// --- Public Routes Siswa & General ---
+		api.POST("/join", siswaHandler.JoinSiswa)
 		api.GET("/modul", modulHandler.GetAllModul)
 		api.GET("/modul/:id", modulHandler.GetModulByID)
-		api.POST("/modul/:id/materi", materiHandler.UploadMateri)
-		api.POST("/modul/:id/soal", soalHandler.UploadSoal)
-		api.GET("/modul/:id/soal", middleware.AuthMiddleware(), soalHandler.GetSoalByModul)
-		api.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
-		api.POST("/join", siswaHandler.JoinSiswa)
-		api.POST("/submit-jawaban", middleware.AuthMiddleware(), jawabanSiswaHandler.SubmitJawaban)
-
-		api.POST("/kelas", kelasHandler.CreateKelas)
-		api.GET("/kelas/:id", kelasHandler.GetKelasByID)
-
 		api.POST("/test-extract-pdf", uploadHandler.TestExtractPDF)
+
+		// --- Protected Routes Siswa (Wajib Token Siswa) ---
+		siswaAuth := api.Group("")
+		siswaAuth.Use(middleware.AuthMiddleware())
+		{
+			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
+			siswaAuth.POST("/submit-jawaban", jawabanSiswaHandler.SubmitJawaban)
+		}
+
+		// --- Protected Routes Guru (Wajib Token Guru) ---
+		guruAuth := api.Group("")
+		guruAuth.Use(middleware.GuruAuthMiddleware())
+		{
+			guruAuth.POST("/modul", modulHandler.CreateModul)
+			guruAuth.POST("/modul/:id/materi", materiHandler.UploadMateri)
+			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
+
+			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
+			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
+			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
+
+			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
+		}
 	}
 
 	return r

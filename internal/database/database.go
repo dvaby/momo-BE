@@ -13,21 +13,29 @@ import (
 
 func Connect(cfg *config.Config) *gorm.DB {
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName,
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Jakarta",
+		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort,
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("Gagal konek ke database: %v", err)
+		log.Fatalf("Gagal terhubung ke database: %v", err)
 	}
-	log.Println("Berhasil konek ke database PostgreSQL!")
 
-	err = db.AutoMigrate(&model.Modul{}, &model.Materi{}, &model.Soal{}, &model.Kelas{}, &model.Siswa{}, &model.JawabanSiswa{})
+	// Auto Migration Table
+	err = db.AutoMigrate(
+		&model.Guru{}, // <--- TAMBAHAN: AutoMigrate tabel gurus
+		&model.Modul{},
+		&model.Materi{},
+		&model.Soal{},
+		&model.Kelas{},
+		&model.Siswa{},
+		&model.JawabanSiswa{},
+	)
 	if err != nil {
-		log.Fatalf("Gagal melakukan migration: %v", err)
+		log.Fatalf("Gagal melakukan auto migration: %v", err)
 	}
-	log.Println("Migration berhasil, tabel siap digunakan!")
 
+	log.Println("Berhasil terhubung ke database dan auto migration selesai!")
 	return db
 }
