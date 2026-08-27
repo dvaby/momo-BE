@@ -40,7 +40,7 @@ func main() {
 
 	// Instansiasi Kelas
 	kelasRepo := repository.NewKelasRepository(db)
-	kelasService := service.NewKelasService(kelasRepo)
+	kelasService := service.NewKelasService(kelasRepo, modulRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
 
 	// Instansiasi Siswa

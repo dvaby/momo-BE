@@ -9,11 +9,15 @@ import (
 )
 
 type KelasService struct {
-	repo *repository.KelasRepository
+	repo      *repository.KelasRepository
+	modulRepo repository.ModulRepository
 }
 
-func NewKelasService(repo *repository.KelasRepository) *KelasService {
-	return &KelasService{repo: repo}
+func NewKelasService(repo *repository.KelasRepository, modulRepo repository.ModulRepository) *KelasService {
+	return &KelasService{
+		repo:      repo,
+		modulRepo: modulRepo,
+	}
 }
 
 func (s *KelasService) CreateKelas(guruID uint, namaKelas string) (*model.Kelas, error) {
@@ -57,4 +61,23 @@ func (s *KelasService) generateKodeUnik() (string, error) {
 
 func (s *KelasService) GetKelasByID(id uint, guruID uint) (*model.Kelas, error) {
 	return s.repo.FindByIDAndGuruID(id, guruID)
+}
+
+func (s *KelasService) AssignModul(kelasID uint, modulID uint, guruID uint) error {
+	kelas, err := s.repo.FindByIDAndGuruID(kelasID, guruID)
+	if err != nil {
+		return fmt.Errorf("kelas tidak ditemukan atau bukan milik guru ini: %w", err)
+	}
+
+	modul, err := s.modulRepo.FindByIDAndGuruID(modulID, guruID)
+	if err != nil {
+		return fmt.Errorf("modul tidak ditemukan atau bukan milik guru ini: %w", err)
+	}
+
+	err = s.repo.AssignModul(kelas, modul)
+	if err != nil {
+		return fmt.Errorf("gagal mengaitkan modul ke kelas: %w", err)
+	}
+
+	return nil
 }

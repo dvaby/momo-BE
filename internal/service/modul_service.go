@@ -1,25 +1,37 @@
 package service
 
 import (
+	"errors"
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 )
 
-type ModulService struct {
-	repo *repository.ModulRepository
+type ModulService interface {
+	CreateModul(judul, deskripsi string, guruID uint) (*model.Modul, error)
+	GetAllModuls(guruID uint) ([]model.Modul, error)
+	GetModulByID(id uint, guruID uint) (*model.Modul, error)
 }
 
-func NewModulService(repo *repository.ModulRepository) *ModulService {
-	return &ModulService{repo: repo}
+type modulService struct {
+	modulRepo repository.ModulRepository
 }
 
-func (s *ModulService) CreateModul(judul string, deskripsi string) (*model.Modul, error) {
+func NewModulService(modulRepo repository.ModulRepository) ModulService {
+	return &modulService{modulRepo}
+}
+
+func (s *modulService) CreateModul(judul, deskripsi string, guruID uint) (*model.Modul, error) {
+	if judul == "" {
+		return nil, errors.New("judul modul tidak boleh kosong")
+	}
+
 	modul := &model.Modul{
+		GuruID:    guruID,
 		Judul:     judul,
 		Deskripsi: deskripsi,
 	}
 
-	err := s.repo.Create(modul)
+	err := s.modulRepo.Create(modul)
 	if err != nil {
 		return nil, err
 	}
@@ -27,10 +39,14 @@ func (s *ModulService) CreateModul(judul string, deskripsi string) (*model.Modul
 	return modul, nil
 }
 
-func (s *ModulService) GetAllModul() ([]model.Modul, error) {
-	return s.repo.FindAll()
+func (s *modulService) GetAllModuls(guruID uint) ([]model.Modul, error) {
+	return s.modulRepo.FindAllByGuruID(guruID)
 }
 
-func (s *ModulService) GetModulByID(id uint) (*model.Modul, error) {
-	return s.repo.FindByID(id)
+func (s *modulService) GetModulByID(id uint, guruID uint) (*model.Modul, error) {
+	modul, err := s.modulRepo.FindByIDAndGuruID(id, guruID)
+	if err != nil {
+		return nil, errors.New("modul tidak ditemukan atau Anda tidak memiliki akses")
+	}
+	return modul, nil
 }

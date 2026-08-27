@@ -21,6 +21,10 @@ type createKelasRequest struct {
 	NamaKelas string `json:"nama_kelas" binding:"required"`
 }
 
+type assignModulRequest struct {
+	ModulID uint `json:"modul_id" binding:"required"`
+}
+
 func (h *KelasHandler) CreateKelas(c *gin.Context) {
 	guruID := c.MustGet("guru_id").(uint)
 
@@ -56,4 +60,29 @@ func (h *KelasHandler) GetKelasByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, kelas)
+}
+
+func (h *KelasHandler) AssignModul(c *gin.Context) {
+	guruID := c.MustGet("guru_id").(uint)
+
+	idParam := c.Param("id")
+	kelasID, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID kelas tidak valid"})
+		return
+	}
+
+	var req assignModulRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = h.service.AssignModul(uint(kelasID), req.ModulID, guruID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Modul berhasil ditambahkan ke kelas"})
 }

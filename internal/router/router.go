@@ -16,7 +16,7 @@ func SetupRouter(
 	siswaHandler *handler.SiswaHandler,
 	jawabanSiswaHandler *handler.JawabanSiswaHandler,
 	nilaiHandler *handler.NilaiHandler,
-	guruHandler *handler.GuruHandler, // <--- TAMBAHAN: Inject GuruHandler
+	guruHandler *handler.GuruHandler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -32,8 +32,6 @@ func SetupRouter(
 
 		// --- Public Routes Siswa & General ---
 		api.POST("/join", siswaHandler.JoinSiswa)
-		api.GET("/modul", modulHandler.GetAllModul)
-		api.GET("/modul/:id", modulHandler.GetModulByID)
 		api.POST("/test-extract-pdf", uploadHandler.TestExtractPDF)
 
 		// --- Protected Routes Siswa (Wajib Token Siswa) ---
@@ -48,14 +46,20 @@ func SetupRouter(
 		guruAuth := api.Group("")
 		guruAuth.Use(middleware.GuruAuthMiddleware())
 		{
+			// Rute Modul
+			guruAuth.GET("/modul", modulHandler.GetAllModuls)
+			guruAuth.GET("/modul/:id", modulHandler.GetModulByID)
 			guruAuth.POST("/modul", modulHandler.CreateModul)
 			guruAuth.POST("/modul/:id/materi", materiHandler.UploadMateri)
 			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
 
+			// Rute Kelas
 			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
+			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul) // Endpoint penugasan modul
 
+			// Rute Nilai
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
 		}
 	}

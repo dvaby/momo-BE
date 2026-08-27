@@ -4,63 +4,82 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-
 	"momo-be/internal/service"
+
+	"github.com/gin-gonic/gin"
 )
 
 type ModulHandler struct {
-	service *service.ModulService
+	modulService service.ModulService
 }
 
-func NewModulHandler(service *service.ModulService) *ModulHandler {
-	return &ModulHandler{service: service}
-}
-
-type createModulRequest struct {
-	Judul     string `json:"judul" binding:"required"`
-	Deskripsi string `json:"deskripsi"`
+func NewModulHandler(modulService service.ModulService) *ModulHandler {
+	return &ModulHandler{modulService}
 }
 
 func (h *ModulHandler) CreateModul(c *gin.Context) {
-	var req createModulRequest
+	var req struct {
+		Judul     string `json:"judul" binding:"required"`
+		Deskripsi string `json:"deskripsi"`
+	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	modul, err := h.service.CreateModul(req.Judul, req.Deskripsi)
+	// Ambil guru_id dari context (diset oleh GuruAuthMiddleware)
+	guruID, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses ditolak, token tidak valid"})
+		return
+	}
+
+	modul, err := h.modulService.CreateModul(req.Judul, req.Deskripsi, guruID.(uint))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat modul"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, modul)
 }
 
-func (h *ModulHandler) GetAllModul(c *gin.Context) {
-	modulList, err := h.service.GetAllModul()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data modul"})
+func (h *ModulHandler) GetAllModuls(c *gin.Context) {
+	guruID, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses ditolak, token tidak valid"})
 		return
 	}
-	c.JSON(http.StatusOK, modulList)
+
+	moduls, err := h.modulService.GetAllModuls(guruID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, moduls)
 }
 
 func (h *ModulHandler) GetModulByID(c *gin.Context) {
 	idParam := c.Param("id")
-	id, err := strconv.ParseUint(idParam, 10, 64)
+	id, err := strconv.Atoi(idParam)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
 		return
 	}
 
-		modul, err := h.service.GetModulByID(uint(id))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Modul tidak ditemukan"})
+	guruID, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses ditolak, token tidak valid"})
 		return
 	}
 
-		c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
+	modul, err := h.modulService.GetModulByID(uint(id), guruID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// MEMPERTAHANKAN FIX BUG #1: Menggunakan DTO agar kunci jawaban aman
+	c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
 }

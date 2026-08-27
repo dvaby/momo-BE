@@ -38,7 +38,7 @@ func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 
 func (r *KelasRepository) FindByID(id uint) (*model.Kelas, error) {
 	var kelas model.Kelas
-	err := r.db.Preload("Siswa").First(&kelas, id).Error
+	err := r.db.Preload("Siswa").Preload("Modul").First(&kelas, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -47,9 +47,13 @@ func (r *KelasRepository) FindByID(id uint) (*model.Kelas, error) {
 
 func (r *KelasRepository) FindByIDAndGuruID(id uint, guruID uint) (*model.Kelas, error) {
 	var kelas model.Kelas
-	err := r.db.Preload("Siswa").Where("id = ? AND guru_id = ?", id, guruID).First(&kelas).Error
+	err := r.db.Preload("Siswa").Preload("Modul").Where("id = ? AND guru_id = ?", id, guruID).First(&kelas).Error
 	if err != nil {
 		return nil, err
 	}
 	return &kelas, nil
+}
+
+func (r *KelasRepository) AssignModul(kelas *model.Kelas, modul *model.Modul) error {
+	return r.db.Model(kelas).Association("Modul").Append(modul)
 }
