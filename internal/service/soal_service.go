@@ -10,12 +10,17 @@ import (
 )
 
 type SoalService struct {
-	repo     *repository.SoalRepository
-	aiClient *aiclient.Client
+	repo      *repository.SoalRepository
+	kelasRepo *repository.KelasRepository
+	aiClient  *aiclient.Client
 }
 
-func NewSoalService(repo *repository.SoalRepository, aiClient *aiclient.Client) *SoalService {
-	return &SoalService{repo: repo, aiClient: aiClient}
+func NewSoalService(repo *repository.SoalRepository, kelasRepo *repository.KelasRepository, aiClient *aiclient.Client) *SoalService {
+	return &SoalService{
+		repo:      repo,
+		kelasRepo: kelasRepo,
+		aiClient:  aiClient,
+	}
 }
 
 func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string) ([]model.Soal, error) {
@@ -63,6 +68,14 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	return soalList, nil
 }
 
-func (s *SoalService) GetSoalByModulAndJenis(modulID uint, jenis model.JenisSoal) ([]model.Soal, error) {
+func (s *SoalService) GetSoalByModulAndJenisForSiswa(modulID uint, kelasID uint, jenis model.JenisSoal) ([]model.Soal, error) {
+	allowed, err := s.kelasRepo.IsModulInKelas(kelasID, modulID)
+	if err != nil {
+		return nil, fmt.Errorf("gagal memverifikasi akses modul: %w", err)
+	}
+	if !allowed {
+		return nil, fmt.Errorf("modul ini tidak ditugaskan untuk kelas Anda")
+	}
+
 	return s.repo.FindByModulAndJenis(modulID, jenis)
 }

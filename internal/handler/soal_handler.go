@@ -77,6 +77,13 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 }
 
 func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
+	kelasIDVal, exists := c.Get("kelas_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		return
+	}
+	kelasID := kelasIDVal.(uint)
+
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
 	if err != nil {
@@ -91,9 +98,9 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 		return
 	}
 
-	soalList, err := h.service.GetSoalByModulAndJenis(uint(modulID), jenis)
+	soalList, err := h.service.GetSoalByModulAndJenisForSiswa(uint(modulID), kelasID, jenis)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data soal"})
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 

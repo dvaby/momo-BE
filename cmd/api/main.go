@@ -33,15 +33,15 @@ func main() {
 	materiService := service.NewMateriService(materiRepo, aiClient)
 	materiHandler := handler.NewMateriHandler(materiService)
 
-	// Instansiasi Soal
-	soalRepo := repository.NewSoalRepository(db)
-	soalService := service.NewSoalService(soalRepo, aiClient)
-	soalHandler := handler.NewSoalHandler(soalService)
-
-	// Instansiasi Kelas
+	// Instansiasi Kelas (Dipindahkan ke atas agar kelasRepo bisa dipakai oleh SoalService)
 	kelasRepo := repository.NewKelasRepository(db)
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
+
+	// Instansiasi Soal (Sekarang menerima kelasRepo)
+	soalRepo := repository.NewSoalRepository(db)
+	soalService := service.NewSoalService(soalRepo, kelasRepo, aiClient)
+	soalHandler := handler.NewSoalHandler(soalService)
 
 	// Instansiasi Siswa
 	siswaRepo := repository.NewSiswaRepository(db)
@@ -67,7 +67,7 @@ func main() {
 		siswaHandler,
 		jawabanSiswaHandler,
 		nilaiHandler,
-		guruHandler, // <--- Kirim guruHandler ke router
+		guruHandler,
 	)
 	r.Run(":" + cfg.ServerPort)
 }
