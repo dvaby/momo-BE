@@ -44,3 +44,12 @@ func (r *KelasRepository) FindByID(id uint) (*model.Kelas, error) {
 	}
 	return &kelas, nil
 }
+
+func (r *KelasRepository) FindByIDAndGuruID(id uint, guruID uint) (*model.Kelas, error) {
+	var kelas model.Kelas
+	err := r.db.Preload("Siswa").Where("id = ? AND guru_id = ?", id, guruID).First(&kelas).Error
+	if err != nil {
+		return nil, err
+	}
+	return &kelas, nil
+}

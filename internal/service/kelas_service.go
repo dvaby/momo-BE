@@ -16,13 +16,14 @@ func NewKelasService(repo *repository.KelasRepository) *KelasService {
 	return &KelasService{repo: repo}
 }
 
-func (s *KelasService) CreateKelas(namaKelas string) (*model.Kelas, error) {
+func (s *KelasService) CreateKelas(guruID uint, namaKelas string) (*model.Kelas, error) {
 	kode, err := s.generateKodeUnik()
 	if err != nil {
 		return nil, err
 	}
 
 	kelas := &model.Kelas{
+		GuruID:    guruID,
 		NamaKelas: namaKelas,
 		KodeKelas: kode,
 	}
@@ -54,6 +55,6 @@ func (s *KelasService) generateKodeUnik() (string, error) {
 	return "", fmt.Errorf("gagal menemukan kode unik setelah %d percobaan", maxPercobaan)
 }
 
-func (s *KelasService) GetKelasByID(id uint) (*model.Kelas, error) {
-	return s.repo.FindByID(id)
+func (s *KelasService) GetKelasByID(id uint, guruID uint) (*model.Kelas, error) {
+	return s.repo.FindByIDAndGuruID(id, guruID)
 }

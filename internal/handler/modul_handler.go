@@ -56,11 +56,11 @@ func (h *ModulHandler) GetModulByID(c *gin.Context) {
 		return
 	}
 
-	modul, err := h.service.GetModulByID(uint(id))
+		modul, err := h.service.GetModulByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Modul tidak ditemukan"})
 		return
 	}
 
-	c.JSON(http.StatusOK, modul)
+		c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
 }

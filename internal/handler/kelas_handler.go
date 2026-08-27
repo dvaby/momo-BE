@@ -22,13 +22,15 @@ type createKelasRequest struct {
 }
 
 func (h *KelasHandler) CreateKelas(c *gin.Context) {
+	guruID := c.MustGet("guru_id").(uint)
+
 	var req createKelasRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	kelas, err := h.service.CreateKelas(req.NamaKelas)
+	kelas, err := h.service.CreateKelas(guruID, req.NamaKelas)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -38,6 +40,8 @@ func (h *KelasHandler) CreateKelas(c *gin.Context) {
 }
 
 func (h *KelasHandler) GetKelasByID(c *gin.Context) {
+	guruID := c.MustGet("guru_id").(uint)
+
 	idParam := c.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil {
@@ -45,7 +49,7 @@ func (h *KelasHandler) GetKelasByID(c *gin.Context) {
 		return
 	}
 
-	kelas, err := h.service.GetKelasByID(uint(id))
+	kelas, err := h.service.GetKelasByID(uint(id), guruID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Kelas tidak ditemukan"})
 		return
