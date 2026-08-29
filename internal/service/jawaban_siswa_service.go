@@ -9,27 +9,52 @@ import (
 )
 
 type JawabanSiswaService struct {
-	repo     *repository.JawabanSiswaRepository
-	soalRepo *repository.SoalRepository
-	aiClient *aiclient.Client
+	repo      *repository.JawabanSiswaRepository
+	soalRepo  *repository.SoalRepository
+	siswaRepo *repository.SiswaRepository
+	kelasRepo *repository.KelasRepository
+	aiClient  *aiclient.Client
 }
 
-func NewJawabanSiswaService(repo *repository.JawabanSiswaRepository, soalRepo *repository.SoalRepository, aiClient *aiclient.Client) *JawabanSiswaService {
-	return &JawabanSiswaService{repo: repo, soalRepo: soalRepo, aiClient: aiClient}
+func NewJawabanSiswaService(
+	repo *repository.JawabanSiswaRepository,
+	soalRepo *repository.SoalRepository,
+	siswaRepo *repository.SiswaRepository,
+	kelasRepo *repository.KelasRepository,
+	aiClient *aiclient.Client,
+) *JawabanSiswaService {
+	return &JawabanSiswaService{
+		repo:      repo,
+		soalRepo:  soalRepo,
+		siswaRepo: siswaRepo,
+		kelasRepo: kelasRepo,
+		aiClient:  aiClient,
+	}
 }
 
-// SubmitJawaban adalah alur inti: siswa menjawab 1 soal lewat suara ->
-// BE ambil detail soal (termasuk kunci jawaban) -> BE kirim ke AI Service
-// untuk dinilai -> BE simpan hasilnya -> balikin hasil evaluasi ke handler
-// (untuk dibacakan lewat TTS).
 func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMentah string) (*model.JawabanSiswa, error) {
+	// 1. Ambil data profil siswa untuk mendapatkan kelas_id
+	siswa, err := s.siswaRepo.FindByID(siswaID)
+	if err != nil {
+		return nil, fmt.Errorf("data siswa tidak ditemukan: %w", err)
+	}
+
+	// 2. Ambil detail soal
 	soal, err := s.soalRepo.FindByID(soalID)
 	if err != nil {
 		return nil, fmt.Errorf("soal dengan ID %d tidak ditemukan", soalID)
 	}
 
-	// Aturan: soal uts/uas hanya boleh dijawab sekali. Soal harian boleh
-	// dijawab berkali-kali (misal karena STT salah tangkap sebelumnya).
+	// 3. Verifikasi apakah modul dari soal ini ditugaskan ke kelas siswa
+	allowed, err := s.kelasRepo.IsModulInKelas(siswa.KelasID, soal.ModulID)
+	if err != nil {
+		return nil, fmt.Errorf("gagal memverifikasi hak akses modul: %w", err)
+	}
+	if !allowed {
+		return nil, fmt.Errorf("soal ini tidak ditugaskan untuk kelas Anda")
+	}
+
+	// 4. Aturan: soal UTS/UAS hanya boleh dijawab sekali per siswa
 	if soal.Jenis == model.JenisSoalUTS || soal.Jenis == model.JenisSoalUAS {
 		jawabanSebelumnya, err := s.repo.FindBySiswaIDAndSoalID(siswaID, soalID)
 		if err == nil && jawabanSebelumnya != nil {
@@ -37,6 +62,7 @@ func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMe
 		}
 	}
 
+	// 5. Evaluasi jawaban via AI Service
 	evalReq := aiclient.EvaluateRequest{
 		Pertanyaan:         soal.Pertanyaan,
 		PilihanA:           soal.PilihanA,
@@ -60,6 +86,7 @@ func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMe
 		return nil, fmt.Errorf(errMsg)
 	}
 
+	// 6. Simpan baris jawaban siswa
 	jawaban := &model.JawabanSiswa{
 		SiswaID:           siswaID,
 		SoalID:            soalID,

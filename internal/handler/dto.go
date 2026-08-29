@@ -68,7 +68,7 @@ func ToModulDetailResponse(modul model.Modul) ModulDetailResponse {
 
 	return ModulDetailResponse{
 		ID:        modul.ID,
-		Judul:     modul.Judul,
+		Judul:     modul.Nama,
 		Deskripsi: modul.Deskripsi,
 		Materi:    modul.Materi,
 		Soal:      soalResponse,

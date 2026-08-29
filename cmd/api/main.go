@@ -33,12 +33,12 @@ func main() {
 	materiService := service.NewMateriService(materiRepo, aiClient)
 	materiHandler := handler.NewMateriHandler(materiService)
 
-	// Instansiasi Kelas (Dipindahkan ke atas agar kelasRepo bisa dipakai oleh SoalService)
+	// Instansiasi Kelas
 	kelasRepo := repository.NewKelasRepository(db)
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
 
-	// Instansiasi Soal (Sekarang menerima kelasRepo)
+	// Instansiasi Soal
 	soalRepo := repository.NewSoalRepository(db)
 	soalService := service.NewSoalService(soalRepo, kelasRepo, aiClient)
 	soalHandler := handler.NewSoalHandler(soalService)
@@ -50,7 +50,7 @@ func main() {
 
 	// Instansiasi Jawaban Siswa
 	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
-	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, aiClient)
+	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient)
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService)
 
 	// Instansiasi Nilai

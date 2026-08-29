@@ -2,9 +2,11 @@ package handler
 
 import (
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -109,9 +111,28 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 		return
 	}
 
+	// Inisialisasi seed acak berdasarkan waktu saat ini
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	responseData := make([]SoalSiswaResponse, 0, len(soalList))
 	for _, soal := range soalList {
-		responseData = append(responseData, ToSoalSiswaResponse(soal))
+		resp := ToSoalSiswaResponse(soal)
+
+		// Kumpulkan pilihan jawaban ke dalam slice
+		pilihan := []string{resp.PilihanA, resp.PilihanB, resp.PilihanC, resp.PilihanD}
+
+		// Acak urutan pilihan jawaban
+		r.Shuffle(len(pilihan), func(i, j int) {
+			pilihan[i], pilihan[j] = pilihan[j], pilihan[i]
+		})
+
+		// Re-assign pilihan yang sudah diacak
+		resp.PilihanA = pilihan[0]
+		resp.PilihanB = pilihan[1]
+		resp.PilihanC = pilihan[2]
+		resp.PilihanD = pilihan[3]
+
+		responseData = append(responseData, resp)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

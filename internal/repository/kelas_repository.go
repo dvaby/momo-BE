@@ -38,7 +38,7 @@ func (r *KelasRepository) FindByIDAndGuruID(id uint, guruID uint) (*model.Kelas,
 
 func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 	var kelas model.Kelas
-	err := r.db.Where("kode = ?", kode).First(&kelas).Error
+	err := r.db.Where("kode_kelas = ?", kode).First(&kelas).Error
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 
 func (r *KelasRepository) IsKodeExists(kode string) (bool, error) {
 	var count int64
-	err := r.db.Model(&model.Kelas{}).Where("kode = ?", kode).Count(&count).Error
+	err := r.db.Model(&model.Kelas{}).Where("kode_kelas = ?", kode).Count(&count).Error
 	if err != nil {
 		return false, err
 	}

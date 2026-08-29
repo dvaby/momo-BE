@@ -4,9 +4,9 @@ import "time"
 
 type Modul struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	GuruID    uint      `gorm:"not null" json:"guru_id"`
-	Judul     string    `gorm:"type:varchar(255);not null" json:"judul"`
-	Deskripsi string    `gorm:"type:text" json:"deskripsi"`
+	GuruID    uint      `gorm:"default:1;not null" json:"guru_id"` // Tambahkan default:1
+	Nama      string    `gorm:"not null" json:"nama"`
+	Deskripsi string    `json:"deskripsi"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 

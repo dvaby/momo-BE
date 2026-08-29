@@ -6,32 +6,26 @@ import (
 	"momo-be/internal/repository"
 )
 
-type ModulService interface {
-	CreateModul(judul, deskripsi string, guruID uint) (*model.Modul, error)
-	GetAllModuls(guruID uint) ([]model.Modul, error)
-	GetModulByID(id uint, guruID uint) (*model.Modul, error)
+type ModulService struct {
+	repo repository.ModulRepository
 }
 
-type modulService struct {
-	modulRepo repository.ModulRepository
+func NewModulService(repo repository.ModulRepository) *ModulService {
+	return &ModulService{repo: repo}
 }
 
-func NewModulService(modulRepo repository.ModulRepository) ModulService {
-	return &modulService{modulRepo}
-}
-
-func (s *modulService) CreateModul(judul, deskripsi string, guruID uint) (*model.Modul, error) {
-	if judul == "" {
-		return nil, errors.New("judul modul tidak boleh kosong")
+func (s *ModulService) Create(guruID uint, nama string, deskripsi string) (*model.Modul, error) {
+	if nama == "" {
+		return nil, errors.New("nama modul wajib diisi")
 	}
 
 	modul := &model.Modul{
 		GuruID:    guruID,
-		Judul:     judul,
+		Nama:      nama,
 		Deskripsi: deskripsi,
 	}
 
-	err := s.modulRepo.Create(modul)
+	err := s.repo.Create(modul)
 	if err != nil {
 		return nil, err
 	}
@@ -39,14 +33,37 @@ func (s *modulService) CreateModul(judul, deskripsi string, guruID uint) (*model
 	return modul, nil
 }
 
-func (s *modulService) GetAllModuls(guruID uint) ([]model.Modul, error) {
-	return s.modulRepo.FindAllByGuruID(guruID)
+func (s *ModulService) GetAll() ([]model.Modul, error) {
+	return s.repo.FindAll()
 }
 
-func (s *modulService) GetModulByID(id uint, guruID uint) (*model.Modul, error) {
-	modul, err := s.modulRepo.FindByIDAndGuruID(id, guruID)
+func (s *ModulService) GetByID(id uint) (*model.Modul, error) {
+	return s.repo.FindByID(id)
+}
+
+func (s *ModulService) GetByGuruID(guruID uint) ([]model.Modul, error) {
+	return s.repo.FindByGuruID(guruID)
+}
+
+func (s *ModulService) Update(id uint, nama string, deskripsi string) (*model.Modul, error) {
+	modul, err := s.repo.FindByID(id)
 	if err != nil {
-		return nil, errors.New("modul tidak ditemukan atau Anda tidak memiliki akses")
+		return nil, err
 	}
+
+	if nama != "" {
+		modul.Nama = nama
+	}
+	modul.Deskripsi = deskripsi
+
+	err = s.repo.Update(modul)
+	if err != nil {
+		return nil, err
+	}
+
 	return modul, nil
+}
+
+func (s *ModulService) Delete(id uint) error {
+	return s.repo.Delete(id)
 }
