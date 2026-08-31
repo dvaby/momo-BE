@@ -11,12 +11,14 @@ import (
 type NilaiService struct {
 	repo      *repository.NilaiRepository
 	kelasRepo *repository.KelasRepository
+	modulRepo repository.ModulRepository
 }
 
-func NewNilaiService(repo *repository.NilaiRepository, kelasRepo *repository.KelasRepository) *NilaiService {
+func NewNilaiService(repo *repository.NilaiRepository, kelasRepo *repository.KelasRepository, modulRepo repository.ModulRepository) *NilaiService {
 	return &NilaiService{
 		repo:      repo,
 		kelasRepo: kelasRepo,
+		modulRepo: modulRepo,
 	}
 }
 
@@ -25,10 +27,16 @@ func (s *NilaiService) GetRekapNilai(kelasID uint, modulID uint, jenis string, g
 		return nil, errors.New("modul_id wajib diisi dan harus valid")
 	}
 
-	// Memakai FindByIDAndGuruID
+	// 1. Validasi kepemilikan Kelas
 	_, err := s.kelasRepo.FindByIDAndGuruID(kelasID, guruID)
 	if err != nil {
 		return nil, fmt.Errorf("akses ditolak: kelas tidak ditemukan atau bukan milik Anda")
+	}
+
+	// 2. Validasi kepemilikan Modul
+	modul, err := s.modulRepo.FindByIDAndGuruID(modulID, guruID)
+	if err != nil || modul == nil {
+		return nil, fmt.Errorf("akses ditolak: modul tidak ditemukan atau bukan milik Anda")
 	}
 
 	return s.repo.GetRekapNilai(kelasID, modulID, jenis)

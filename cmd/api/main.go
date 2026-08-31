@@ -55,7 +55,7 @@ func main() {
 
 	// Instansiasi Nilai (ditambahkan kelasRepo)
 	nilaiRepo := repository.NewNilaiRepository(db)
-	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo)
+	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 	nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
 	r := router.SetupRouter(
