@@ -12,18 +12,31 @@ import (
 type SoalService struct {
 	repo      *repository.SoalRepository
 	kelasRepo *repository.KelasRepository
+	modulRepo repository.ModulRepository // Menggunakan interface langsung (tanpa *)
 	aiClient  *aiclient.Client
 }
 
-func NewSoalService(repo *repository.SoalRepository, kelasRepo *repository.KelasRepository, aiClient *aiclient.Client) *SoalService {
+func NewSoalService(
+	repo *repository.SoalRepository,
+	kelasRepo *repository.KelasRepository,
+	modulRepo repository.ModulRepository, // Tanpa *
+	aiClient *aiclient.Client,
+) *SoalService {
 	return &SoalService{
 		repo:      repo,
 		kelasRepo: kelasRepo,
+		modulRepo: modulRepo,
 		aiClient:  aiClient,
 	}
 }
 
-func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string) ([]model.Soal, error) {
+func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string, guruID uint) ([]model.Soal, error) {
+	// Memakai FindByIDAndGuruID
+	_, err := s.modulRepo.FindByIDAndGuruID(modulID, guruID)
+	if err != nil {
+		return nil, fmt.Errorf("akses ditolak: modul tidak ditemukan atau bukan milik Anda")
+	}
+
 	teksMentah, err := pdfworker.ExtractText(pdfFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("gagal ekstrak PDF: %w", err)

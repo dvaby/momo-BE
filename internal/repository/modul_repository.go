@@ -36,7 +36,7 @@ func (r *modulRepository) FindAll() ([]model.Modul, error) {
 
 func (r *modulRepository) FindByID(id uint) (*model.Modul, error) {
 	var modul model.Modul
-	err := r.db.First(&modul, id).Error
+	err := r.db.Preload("Materi").Preload("Soal").First(&modul, id).Error
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-
 	"momo-be/internal/service"
 )
 
@@ -26,7 +25,11 @@ type assignModulRequest struct {
 }
 
 func (h *KelasHandler) CreateKelas(c *gin.Context) {
-	guruID := c.MustGet("guru_id").(uint)
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 
 	var req createKelasRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -44,7 +47,11 @@ func (h *KelasHandler) CreateKelas(c *gin.Context) {
 }
 
 func (h *KelasHandler) GetKelasByID(c *gin.Context) {
-	guruID := c.MustGet("guru_id").(uint)
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 
 	idParam := c.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
@@ -63,7 +70,11 @@ func (h *KelasHandler) GetKelasByID(c *gin.Context) {
 }
 
 func (h *KelasHandler) AssignModul(c *gin.Context) {
-	guruID := c.MustGet("guru_id").(uint)
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
 
 	idParam := c.Param("id")
 	kelasID, err := strconv.ParseUint(idParam, 10, 64)

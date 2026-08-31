@@ -2,14 +2,11 @@ package handler
 
 import (
 	"io"
-	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
-
 	"momo-be/internal/model"
 	"momo-be/internal/service"
 )
@@ -23,6 +20,13 @@ func NewSoalHandler(service *service.SoalService) *SoalHandler {
 }
 
 func (h *SoalHandler) UploadSoal(c *gin.Context) {
+	// FIX: Ambil guru_id dari context
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
 	if err != nil {
@@ -64,27 +68,34 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		return
 	}
 
-	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFile.Name())
+	// FIX: Pass guruID ke service untuk memvalidasi kepemilikan modul_id
+	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFile.Name(), guruID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	// FIX: Mapping ke DTO untuk mencegah kebocoran KunciJawaban pada raw DB Model
+	responseData := make([]SoalResponse, 0, len(soalList))
+	for _, soal := range soalList {
+		responseData = append(responseData, ToSoalResponse(soal))
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Soal berhasil diproses dan disimpan",
 		"jenis":   jenis,
-		"jumlah":  len(soalList),
-		"data":    soalList,
+		"jumlah":  len(responseData),
+		"data":    responseData,
 	})
 }
 
 func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
-	kelasIDVal, exists := c.Get("kelas_id")
-	if !exists {
+	// FIX: Safe type checking untuk kelas_id
+	kelasID, ok := getUintFromContext(c, "kelas_id")
+	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
 		return
 	}
-	kelasID := kelasIDVal.(uint)
 
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
@@ -111,28 +122,10 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 		return
 	}
 
-	// Inisialisasi seed acak berdasarkan waktu saat ini
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	responseData := make([]SoalSiswaResponse, 0, len(soalList))
+	// FIX: Hapus logika r.Shuffle pada soal jawaban. Mapping langsung ke DTO.
+	responseData := make([]SoalResponse, 0, len(soalList))
 	for _, soal := range soalList {
-		resp := ToSoalSiswaResponse(soal)
-
-		// Kumpulkan pilihan jawaban ke dalam slice
-		pilihan := []string{resp.PilihanA, resp.PilihanB, resp.PilihanC, resp.PilihanD}
-
-		// Acak urutan pilihan jawaban
-		r.Shuffle(len(pilihan), func(i, j int) {
-			pilihan[i], pilihan[j] = pilihan[j], pilihan[i]
-		})
-
-		// Re-assign pilihan yang sudah diacak
-		resp.PilihanA = pilihan[0]
-		resp.PilihanB = pilihan[1]
-		resp.PilihanC = pilihan[2]
-		resp.PilihanD = pilihan[3]
-
-		responseData = append(responseData, resp)
+		responseData = append(responseData, ToSoalResponse(soal))
 	}
 
 	c.JSON(http.StatusOK, gin.H{

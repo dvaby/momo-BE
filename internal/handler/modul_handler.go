@@ -81,5 +81,5 @@ func (h *ModulHandler) GetModulByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, modul)
+		c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
 }
