@@ -68,6 +68,13 @@ func (h *ModulHandler) GetAllModuls(c *gin.Context) {
 }
 
 func (h *ModulHandler) GetModulByID(c *gin.Context) {
+	guruIDVal, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus guru"})
+		return
+	}
+	guruID := guruIDVal.(uint)
+
 	idParam := c.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 64)
 	if err != nil {
@@ -75,11 +82,11 @@ func (h *ModulHandler) GetModulByID(c *gin.Context) {
 		return
 	}
 
-	modul, err := h.modulService.GetByID(uint(id))
+	modul, err := h.modulService.GetByIDAndGuruID(uint(id), guruID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Modul tidak ditemukan"})
 		return
 	}
 
-		c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
+	c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
 }
