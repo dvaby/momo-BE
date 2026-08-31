@@ -1,42 +1,38 @@
-# ==========================================
-# Stage 1: Build Binary
-# ==========================================
-FROM golang:alpine AS builder
+# ================================
+# Stage 1: Build Stage
+# ================================
+FROM golang:1.23-alpine AS builder
+
+# Izinkan Go mengunduh toolchain yang sesuai dengan go.mod secara otomatis
+ENV GOTOOLCHAIN=auto
+
+# Install certs & git
+RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
 
-# Aktifkan auto toolchain jika go.mod membutuhkan versi Go lebih tinggi
-ENV GOTOOLCHAIN=auto
-
-# Install git jika ada dependency yang butuh VCS
-RUN apk add --no-cache git
-
-# Copy dependency manifest & download modules
+# Dependency Caching
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy seluruh source code
+# Copy source code
 COPY . .
 
-# Build binary Golang yang terkompresi & statis
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o main ./cmd/api
+# Build biner Go tanpa CGO
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o main ./cmd/api/main.go
 
-# ==========================================
-# Stage 2: Production Runtime
-# ==========================================
+# ================================
+# Stage 2: Final Runtime Stage
+# ================================
 FROM alpine:3.19
+
+RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
-# WARN: poppler-utils WAJIB ada untuk fitur extract-pdf (pdftotext)
-RUN apk add --no-cache poppler-utils ca-certificates tzdata
-
-# Set timezone ke Asia/Jakarta
-ENV TZ=Asia/Jakarta
-
-# Copy binary dari stage builder
-COPY --from=builder /app/main /app/main
+# Copy biner dari stage builder
+COPY --from=builder /app/main .
 
 EXPOSE 8080
 
-CMD ["/app/main"]
+CMD ["./main"]

@@ -1,16 +1,45 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: momo-postgres
-    restart: always
-    environment:
-      POSTGRES_USER: momo_user
-      POSTGRES_PASSWORD: momo_pass
-      POSTGRES_DB: momo_db
+  # Service Backend (Golang)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: momo_backend
     ports:
-      - "5433:5432"
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=secretpassword
+      - DB_NAME=momo_lms
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  # Service Database (PostgreSQL)
+  db:
+    image: postgres:16-alpine
+    container_name: momo_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: momo_lms
+    ports:
+      - "5432:5432"
     volumes:
-      - momo_pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
 
 volumes:
-  momo_pgdata:
+  postgres_data:

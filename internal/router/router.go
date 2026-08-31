@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 
 	"momo-be/internal/config"
 	"momo-be/internal/handler"
@@ -26,6 +27,13 @@ func SetupRouter(
 ) *gin.Engine {
 	r := gin.Default()
 
+	// Inisialisasi Rate Limiter
+	// 1. Auth Limiter: Max 5 req/menit (mencegah brute-force login/register/join)
+	authLimiter := middleware.NewIPRateLimiter(rate.Every(12*time.Second), 5)
+
+	// 2. AI Limiter: Max 10 req/menit, burst 3 (membatasi kuota pemrosesan PDF & AI)
+	aiLimiter := middleware.NewIPRateLimiter(rate.Every(6*time.Second), 3)
+
 	// Parse origin statis dari konfigurasi .env
 	rawOrigins := strings.Split(cfg.CORSAllowedOrigins, ",")
 	var allowedStatic []string
@@ -39,13 +47,11 @@ func SetupRouter(
 	// CORS Middleware dipasang SEBELUM route dan middleware auth
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			// Check allowed static origins (Localhost)
 			for _, o := range allowedStatic {
 				if origin == o {
 					return true
 				}
 			}
-			// Izinkan semua subdomain vercel.app (production & preview deployment)
 			return strings.HasSuffix(origin, ".vercel.app") || origin == "https://vercel.app"
 		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -60,20 +66,20 @@ func SetupRouter(
 
 	api := r.Group("/api/v1")
 	{
-		// --- Public Routes Guru (Auth) ---
-		api.POST("/guru/register", guruHandler.Register)
-		api.POST("/guru/login", guruHandler.Login)
+		// --- Public Routes Guru (Auth + Rate Limiter) ---
+		api.POST("/guru/register", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Register)
+		api.POST("/guru/login", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Login)
 
 		// --- Public Routes Siswa & General ---
-		api.POST("/join", siswaHandler.JoinSiswa)
-		api.POST("/test-extract-pdf", uploadHandler.TestExtractPDF)
+		api.POST("/join", middleware.RateLimiterMiddleware(authLimiter), siswaHandler.JoinSiswa)
+		api.POST("/test-extract-pdf", middleware.RateLimiterMiddleware(aiLimiter), uploadHandler.TestExtractPDF)
 
 		// --- Protected Routes Siswa (Wajib Token Siswa) ---
 		siswaAuth := api.Group("")
 		siswaAuth.Use(middleware.AuthMiddleware())
 		{
 			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
-			siswaAuth.POST("/submit-jawaban", jawabanSiswaHandler.SubmitJawaban)
+			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
 		}
 
 		// --- Protected Routes Guru (Wajib Token Guru) ---
