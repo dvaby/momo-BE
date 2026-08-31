@@ -17,15 +17,15 @@ func NewSiswaService(repo *repository.SiswaRepository, kelasRepo *repository.Kel
 	return &SiswaService{repo: repo, kelasRepo: kelasRepo}
 }
 
-func (s *SiswaService) DaftarkanSiswa(kelasID uint, nama string) (*model.Siswa, error) {
-	_, err := s.kelasRepo.FindByID(kelasID)
-	if err != nil {
-		return nil, fmt.Errorf("kelas dengan ID %d tidak ditemukan", kelasID)
+func (s *SiswaService) DaftarkanSiswa(kelasID, guruID uint, nama string) (*model.Siswa, error) {
+	kelas, err := s.kelasRepo.FindByIDAndGuruID(kelasID, guruID)
+	if err != nil || kelas == nil {
+		return nil, fmt.Errorf("kelas tidak ditemukan atau Anda tidak memiliki akses ke kelas ini")
 	}
 
 	siswaSudahAda, err := s.repo.FindByNamaAndKelasID(nama, kelasID)
 	if err == nil && siswaSudahAda != nil {
-		return nil, fmt.Errorf("siswa dengan nama '%s'sudah terdaftar di kelas ini", nama)
+		return nil, fmt.Errorf("siswa dengan nama '%s' sudah terdaftar di kelas ini", nama)
 	}
 
 	siswa := &model.Siswa{
@@ -41,10 +41,6 @@ func (s *SiswaService) DaftarkanSiswa(kelasID uint, nama string) (*model.Siswa, 
 	return siswa, nil
 }
 
-// JoinSiswa dipanggil saat siswa (lewat suara) sebut kode kelas + nama.
-// Alurnya: cari Kelas berdasarkan kode -> cari Siswa dengan nama itu
-// di dalam kelas tersebut -> kalau cocok, terbitkan token JWT sebagai
-// bukti identitas siswa itu untuk request-request selanjutnya.
 func (s *SiswaService) JoinSiswa(kodeKelas string, nama string) (*model.Siswa, string, error) {
 	kelas, err := s.kelasRepo.FindByKode(kodeKelas)
 	if err != nil {

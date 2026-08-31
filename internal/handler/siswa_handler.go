@@ -22,6 +22,13 @@ type daftarSiswaRequest struct {
 }
 
 func (h *SiswaHandler) DaftarkanSiswa(c *gin.Context) {
+	guruIDVal, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus guru"})
+		return
+	}
+	guruID := guruIDVal.(uint)
+
 	kelasIDParam := c.Param("id")
 	kelasID, err := strconv.ParseUint(kelasIDParam, 10, 64)
 	if err != nil {
@@ -35,7 +42,7 @@ func (h *SiswaHandler) DaftarkanSiswa(c *gin.Context) {
 		return
 	}
 
-	siswa, err := h.service.DaftarkanSiswa(uint(kelasID), req.Nama)
+	siswa, err := h.service.DaftarkanSiswa(uint(kelasID), guruID, req.Nama)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -44,16 +51,11 @@ func (h *SiswaHandler) DaftarkanSiswa(c *gin.Context) {
 	c.JSON(http.StatusCreated, siswa)
 }
 
-// joinSiswaRequest adalah body yang dikirim saat siswa "join" lewat suara:
-// sebut kode kelas, lalu sebut nama.
 type joinSiswaRequest struct {
 	KodeKelas string `json:"kode_kelas" binding:"required"`
 	Nama      string `json:"nama" binding:"required"`
 }
 
-// joinSiswaResponse adalah bentuk balasan ke FE: data siswa yang berhasil
-// join, plus token JWT yang harus disimpan FE dan dikirim ulang di
-// request-request berikutnya (ambil soal, submit jawaban, dst).
 type joinSiswaResponse struct {
 	SiswaID uint   `json:"siswa_id"`
 	KelasID uint   `json:"kelas_id"`

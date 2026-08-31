@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 )
@@ -39,6 +40,10 @@ func (s *ModulService) GetAll() ([]model.Modul, error) {
 
 func (s *ModulService) GetByID(id uint) (*model.Modul, error) {
 	return s.repo.FindByID(id)
+}
+
+func (s *ModulService) GetByIDAndGuruID(id, guruID uint) (*model.Modul, error) {
+	return s.repo.FindByIDAndGuruID(id, guruID)
 }
 
 func (s *ModulService) GetByGuruID(guruID uint) ([]model.Modul, error) {
