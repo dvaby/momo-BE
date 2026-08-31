@@ -36,6 +36,15 @@ func (r *KelasRepository) FindByIDAndGuruID(id uint, guruID uint) (*model.Kelas,
 	return &kelas, nil
 }
 
+func (r *KelasRepository) FindByGuruID(guruID uint) ([]model.Kelas, error) {
+	var kelasList []model.Kelas
+	err := r.db.Preload("Siswa").Preload("Modul").Where("guru_id = ?", guruID).Find(&kelasList).Error
+	if err != nil {
+		return nil, err
+	}
+	return kelasList, nil
+}
+
 func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 	var kelas model.Kelas
 	err := r.db.Where("kode_kelas = ?", kode).First(&kelas).Error
