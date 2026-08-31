@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
@@ -50,10 +51,10 @@ func (s *ModulService) GetByGuruID(guruID uint) ([]model.Modul, error) {
 	return s.repo.FindByGuruID(guruID)
 }
 
-func (s *ModulService) Update(id uint, nama string, deskripsi string) (*model.Modul, error) {
-	modul, err := s.repo.FindByID(id)
+func (s *ModulService) Update(id uint, guruID uint, nama string, deskripsi string) (*model.Modul, error) {
+	modul, err := s.repo.FindByIDAndGuruID(id, guruID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("modul tidak ditemukan atau bukan milik Anda")
 	}
 
 	if nama != "" {
@@ -69,6 +70,10 @@ func (s *ModulService) Update(id uint, nama string, deskripsi string) (*model.Mo
 	return modul, nil
 }
 
-func (s *ModulService) Delete(id uint) error {
+func (s *ModulService) Delete(id uint, guruID uint) error {
+	_, err := s.repo.FindByIDAndGuruID(id, guruID)
+	if err != nil {
+		return fmt.Errorf("modul tidak ditemukan atau bukan milik Anda")
+	}
 	return s.repo.Delete(id)
 }

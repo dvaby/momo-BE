@@ -15,7 +15,7 @@ func NewNilaiRepository(db *gorm.DB) *NilaiRepository {
 
 // GetRekapNilai mengambil rekap nilai per siswa berdasarkan kelas, modul, dan jenis (opsional)
 func (r *NilaiRepository) GetRekapNilai(kelasID uint, modulID uint, jenis string) ([]model.NilaiSiswa, error) {
-	var result []model.NilaiSiswa
+	result := []model.NilaiSiswa{}
 
 	// 1. Susun query dasar
 	// Kita gunakan CTE (WITH) agar query kompleks ini lebih terstruktur dan mudah dibaca
