@@ -38,7 +38,7 @@ func main() {
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
 
-	// Instansiasi Soal (ditambahkan modulRepo)
+	// Instansiasi Soal
 	soalRepo := repository.NewSoalRepository(db)
 	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient)
 	soalHandler := handler.NewSoalHandler(soalService)
@@ -53,12 +53,13 @@ func main() {
 	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient)
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService)
 
-	// Instansiasi Nilai (ditambahkan kelasRepo)
+	// Instansiasi Nilai (tambahkan modulRepo sebagai argumen ke-3)
 	nilaiRepo := repository.NewNilaiRepository(db)
 	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 	nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
 	r := router.SetupRouter(
+		cfg,
 		modulHandler,
 		uploadHandler,
 		materiHandler,

@@ -1,13 +1,19 @@
 package router
 
 import (
+	"strings"
+	"time"
+
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
+	"momo-be/internal/config"
 	"momo-be/internal/handler"
 	"momo-be/internal/middleware"
 )
 
 func SetupRouter(
+	cfg *config.Config,
 	modulHandler *handler.ModulHandler,
 	uploadHandler *handler.UploadHandler,
 	materiHandler *handler.MateriHandler,
@@ -19,6 +25,34 @@ func SetupRouter(
 	guruHandler *handler.GuruHandler,
 ) *gin.Engine {
 	r := gin.Default()
+
+	// Parse origin statis dari konfigurasi .env
+	rawOrigins := strings.Split(cfg.CORSAllowedOrigins, ",")
+	var allowedStatic []string
+	for _, o := range rawOrigins {
+		trimmed := strings.TrimSpace(o)
+		if trimmed != "" {
+			allowedStatic = append(allowedStatic, trimmed)
+		}
+	}
+
+	// CORS Middleware dipasang SEBELUM route dan middleware auth
+	r.Use(cors.New(cors.Config{
+		AllowOriginFunc: func(origin string) bool {
+			// Check allowed static origins (Localhost)
+			for _, o := range allowedStatic {
+				if origin == o {
+					return true
+				}
+			}
+			// Izinkan semua subdomain vercel.app (production & preview deployment)
+			return strings.HasSuffix(origin, ".vercel.app") || origin == "https://vercel.app"
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "message": "server is running!"})
@@ -57,7 +91,7 @@ func SetupRouter(
 			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
-			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul) // Endpoint penugasan modul
+			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)
 
 			// Rute Nilai
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)

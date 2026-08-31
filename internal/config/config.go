@@ -8,13 +8,14 @@ import (
 )
 
 type Config struct {
-	DBHost       string
-	DBPort       string
-	DBUser       string
-	DBPassword   string
-	DBName       string
-	ServerPort   string
-	AIServiceURL string
+	DBHost             string
+	DBPort             string
+	DBUser             string
+	DBPassword         string
+	DBName             string
+	ServerPort         string
+	AIServiceURL       string
+	CORSAllowedOrigins string
 }
 
 func LoadConfig() *Config {
@@ -23,13 +24,19 @@ func LoadConfig() *Config {
 		log.Println("Warning: .env file tidak ditemukan, menggunakan environment variable sistem")
 	}
 
+	corsOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if corsOrigins == "" {
+		corsOrigins = "http://localhost:3000,http://localhost:5173"
+	}
+
 	return &Config{
-		DBHost:       os.Getenv("DB_HOST"),
-		DBPort:       os.Getenv("DB_PORT"),
-		DBUser:       os.Getenv("DB_USER"),
-		DBPassword:   os.Getenv("DB_PASSWORD"),
-		DBName:       os.Getenv("DB_NAME"),
-		ServerPort:   os.Getenv("SERVER_PORT"),
-		AIServiceURL: os.Getenv("AI_SERVICE_URL"),
+		DBHost:             os.Getenv("DB_HOST"),
+		DBPort:             os.Getenv("DB_PORT"),
+		DBUser:             os.Getenv("DB_USER"),
+		DBPassword:         os.Getenv("DB_PASSWORD"),
+		DBName:             os.Getenv("DB_NAME"),
+		ServerPort:         os.Getenv("SERVER_PORT"),
+		AIServiceURL:       os.Getenv("AI_SERVICE_URL"),
+		CORSAllowedOrigins: corsOrigins,
 	}
 }
