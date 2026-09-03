@@ -13,8 +13,8 @@ import (
 
 func Connect(cfg *config.Config) *gorm.DB {
 	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Jakarta",
-		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort,
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Jakarta",
+		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort, cfg.DBSSLMode,
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
@@ -24,7 +24,7 @@ func Connect(cfg *config.Config) *gorm.DB {
 
 	// Auto Migration Table
 	err = db.AutoMigrate(
-		&model.Guru{}, // <--- TAMBAHAN: AutoMigrate tabel gurus
+		&model.Guru{},
 		&model.Modul{},
 		&model.Materi{},
 		&model.Soal{},

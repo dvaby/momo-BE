@@ -13,6 +13,7 @@ type Config struct {
 	DBUser             string
 	DBPassword         string
 	DBName             string
+	DBSSLMode          string
 	ServerPort         string
 	AIServiceURL       string
 	CORSAllowedOrigins string
@@ -29,12 +30,18 @@ func LoadConfig() *Config {
 		corsOrigins = "http://localhost:3000,http://localhost:5173"
 	}
 
+	sslMode := os.Getenv("DB_SSLMODE")
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+
 	return &Config{
 		DBHost:             os.Getenv("DB_HOST"),
 		DBPort:             os.Getenv("DB_PORT"),
 		DBUser:             os.Getenv("DB_USER"),
 		DBPassword:         os.Getenv("DB_PASSWORD"),
 		DBName:             os.Getenv("DB_NAME"),
+		DBSSLMode:          sslMode,
 		ServerPort:         os.Getenv("SERVER_PORT"),
 		AIServiceURL:       os.Getenv("AI_SERVICE_URL"),
 		CORSAllowedOrigins: corsOrigins,
