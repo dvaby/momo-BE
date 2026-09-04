@@ -10,6 +10,8 @@ type GuruRepository interface {
 	Create(guru *model.Guru) error
 	FindByEmail(email string) (*model.Guru, error)
 	FindByID(id uint) (*model.Guru, error)
+	FindByVerificationToken(token string) (*model.Guru, error)
+	Update(guru *model.Guru) error
 }
 
 type guruRepository struct {
@@ -40,4 +42,17 @@ func (r *guruRepository) FindByID(id uint) (*model.Guru, error) {
 		return nil, err
 	}
 	return &guru, nil
+}
+
+func (r *guruRepository) FindByVerificationToken(token string) (*model.Guru, error) {
+	var guru model.Guru
+	err := r.db.Where("verification_token = ?", token).First(&guru).Error
+	if err != nil {
+		return nil, err
+	}
+	return &guru, nil
+}
+
+func (r *guruRepository) Update(guru *model.Guru) error {
+	return r.db.Save(guru).Error
 }

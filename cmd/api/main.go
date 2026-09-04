@@ -8,6 +8,7 @@ import (
 	"momo-be/internal/router"
 	"momo-be/internal/service"
 	"momo-be/pkg/aiclient"
+	"momo-be/pkg/emailsender"
 )
 
 func main() {
@@ -15,45 +16,38 @@ func main() {
 	db := database.Connect(cfg)
 
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
+	emailClient := emailsender.NewClient(cfg.ResendAPIKey)
 
-	// Instansiasi Guru
 	guruRepo := repository.NewGuruRepository(db)
-	guruService := service.NewGuruService(guruRepo)
+	guruService := service.NewGuruService(guruRepo, emailClient, cfg.AppBaseURL)
 	guruHandler := handler.NewGuruHandler(guruService)
 
-	// Instansiasi Modul
 	modulRepo := repository.NewModulRepository(db)
 	modulService := service.NewModulService(modulRepo)
 	modulHandler := handler.NewModulHandler(modulService)
 
 	uploadHandler := handler.NewUploadHandler()
 
-	// Instansiasi Materi
 	materiRepo := repository.NewMateriRepository(db)
 	materiService := service.NewMateriService(materiRepo, aiClient)
 	materiHandler := handler.NewMateriHandler(materiService)
 
-	// Instansiasi Kelas
 	kelasRepo := repository.NewKelasRepository(db)
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
 	kelasHandler := handler.NewKelasHandler(kelasService)
 
-	// Instansiasi Soal
 	soalRepo := repository.NewSoalRepository(db)
 	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient)
 	soalHandler := handler.NewSoalHandler(soalService)
 
-	// Instansiasi Siswa
 	siswaRepo := repository.NewSiswaRepository(db)
 	siswaService := service.NewSiswaService(siswaRepo, kelasRepo)
 	siswaHandler := handler.NewSiswaHandler(siswaService)
 
-	// Instansiasi Jawaban Siswa
 	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
 	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient)
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService)
 
-	// Instansiasi Nilai (tambahkan modulRepo sebagai argumen ke-3)
 	nilaiRepo := repository.NewNilaiRepository(db)
 	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 	nilaiHandler := handler.NewNilaiHandler(nilaiService)

@@ -27,14 +27,9 @@ func SetupRouter(
 ) *gin.Engine {
 	r := gin.Default()
 
-	// Inisialisasi Rate Limiter
-	// 1. Auth Limiter: Max 5 req/menit (mencegah brute-force login/register/join)
 	authLimiter := middleware.NewIPRateLimiter(rate.Every(12*time.Second), 5)
-
-	// 2. AI Limiter: Max 10 req/menit, burst 3 (membatasi kuota pemrosesan PDF & AI)
 	aiLimiter := middleware.NewIPRateLimiter(rate.Every(6*time.Second), 3)
 
-	// Parse origin statis dari konfigurasi .env
 	rawOrigins := strings.Split(cfg.CORSAllowedOrigins, ",")
 	var allowedStatic []string
 	for _, o := range rawOrigins {
@@ -44,7 +39,6 @@ func SetupRouter(
 		}
 	}
 
-	// CORS Middleware dipasang SEBELUM route dan middleware auth
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
 			for _, o := range allowedStatic {
@@ -66,15 +60,13 @@ func SetupRouter(
 
 	api := r.Group("/api/v1")
 	{
-		// --- Public Routes Guru (Auth + Rate Limiter) ---
 		api.POST("/guru/register", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Register)
 		api.POST("/guru/login", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Login)
+		api.GET("/guru/verify-email", guruHandler.VerifyEmail)
 
-		// --- Public Routes Siswa & General ---
 		api.POST("/join", middleware.RateLimiterMiddleware(authLimiter), siswaHandler.JoinSiswa)
 		api.POST("/test-extract-pdf", middleware.RateLimiterMiddleware(aiLimiter), uploadHandler.TestExtractPDF)
 
-		// --- Protected Routes Siswa (Wajib Token Siswa) ---
 		siswaAuth := api.Group("")
 		siswaAuth.Use(middleware.AuthMiddleware())
 		{
@@ -82,24 +74,20 @@ func SetupRouter(
 			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
 		}
 
-		// --- Protected Routes Guru (Wajib Token Guru) ---
 		guruAuth := api.Group("")
 		guruAuth.Use(middleware.GuruAuthMiddleware())
 		{
-			// Rute Modul
 			guruAuth.GET("/modul", modulHandler.GetAllModuls)
 			guruAuth.GET("/modul/:id", modulHandler.GetModulByID)
 			guruAuth.POST("/modul", modulHandler.CreateModul)
 			guruAuth.POST("/modul/:id/materi", materiHandler.UploadMateri)
 			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
 
-			// Rute Kelas
 			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)
 
-			// Rute Nilai
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
 		}
 	}

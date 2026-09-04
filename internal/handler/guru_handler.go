@@ -31,7 +31,7 @@ func (h *GuruHandler) Register(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "pendaftaran guru berhasil",
+		"message": "pendaftaran berhasil, silakan cek email kamu untuk verifikasi akun",
 		"data":    guru,
 	})
 }
@@ -53,4 +53,19 @@ func (h *GuruHandler) Login(c *gin.Context) {
 		"message": "login berhasil",
 		"data":    resp,
 	})
+}
+
+func (h *GuruHandler) VerifyEmail(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token wajib disertakan"})
+		return
+	}
+
+	if err := h.guruService.VerifyEmail(token); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email berhasil diverifikasi, silakan login"})
 }

@@ -17,6 +17,8 @@ type Config struct {
 	ServerPort         string
 	AIServiceURL       string
 	CORSAllowedOrigins string
+	ResendAPIKey       string
+	AppBaseURL         string
 }
 
 func LoadConfig() *Config {
@@ -35,6 +37,11 @@ func LoadConfig() *Config {
 		sslMode = "disable"
 	}
 
+	appBaseURL := os.Getenv("APP_BASE_URL")
+	if appBaseURL == "" {
+		appBaseURL = "http://localhost:8080"
+	}
+
 	return &Config{
 		DBHost:             os.Getenv("DB_HOST"),
 		DBPort:             os.Getenv("DB_PORT"),
@@ -45,5 +52,7 @@ func LoadConfig() *Config {
 		ServerPort:         os.Getenv("SERVER_PORT"),
 		AIServiceURL:       os.Getenv("AI_SERVICE_URL"),
 		CORSAllowedOrigins: corsOrigins,
+		ResendAPIKey:       os.Getenv("RESEND_API_KEY"),
+		AppBaseURL:         appBaseURL,
 	}
 }

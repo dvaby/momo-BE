@@ -14,6 +14,7 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=secretpassword
       - DB_NAME=momo_lms
+      - DB_SSLMODE=disable
       - CORS_ALLOWED_ORIGINS=http://localhost:3000
     env_file:
       - .env
