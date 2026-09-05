@@ -10,12 +10,21 @@ import (
 )
 
 type MateriService struct {
-	repo     *repository.MateriRepository
-	aiClient *aiclient.Client
+	repo      *repository.MateriRepository
+	modulRepo repository.ModulRepository
+	aiClient  *aiclient.Client
 }
 
-func NewMateriService(repo *repository.MateriRepository, aiClient *aiclient.Client) *MateriService {
-	return &MateriService{repo: repo, aiClient: aiClient}
+func NewMateriService(repo *repository.MateriRepository, modulRepo repository.ModulRepository, aiClient *aiclient.Client) *MateriService {
+	return &MateriService{repo: repo, modulRepo: modulRepo, aiClient: aiClient}
+}
+
+func (s *MateriService) ValidateModulOwnership(modulID uint, guruID uint) error {
+	_, err := s.modulRepo.FindByIDAndGuruID(modulID, guruID)
+	if err != nil {
+		return fmt.Errorf("akses ditolak: modul tidak ditemukan atau bukan milik Anda")
+	}
+	return nil
 }
 
 func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) ([]model.Materi, error) {
@@ -29,7 +38,7 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		return nil, fmt.Errorf("gagal memproses lewat AI Service: %w", err)
 	}
 
-		if !aiResponse.Success {
+	if !aiResponse.Success {
 		errMsg := "AI Service gagal memproses teks"
 		if aiResponse.Message != "" {
 			errMsg = aiResponse.Message
@@ -37,7 +46,7 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		return nil, fmt.Errorf(errMsg)
 	}
 
-		var materiList []model.Materi
+	var materiList []model.Materi
 	for _, item := range aiResponse.Data.Materi {
 		materiList = append(materiList, model.Materi{
 			ModulID: modulID,

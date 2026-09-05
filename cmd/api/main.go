@@ -29,7 +29,7 @@ func main() {
 	uploadHandler := handler.NewUploadHandler()
 
 	materiRepo := repository.NewMateriRepository(db)
-	materiService := service.NewMateriService(materiRepo, aiClient)
+	materiService := service.NewMateriService(materiRepo, modulRepo, aiClient)
 	materiHandler := handler.NewMateriHandler(materiService)
 
 	kelasRepo := repository.NewKelasRepository(db)

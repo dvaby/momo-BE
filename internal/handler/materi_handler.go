@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,10 +21,21 @@ func NewMateriHandler(service *service.MateriService) *MateriHandler {
 }
 
 func (h *MateriHandler) UploadMateri(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	if err := h.service.ValidateModulOwnership(uint(modulID), guruID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -45,24 +57,29 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat file sementara"})
 		return
 	}
-	defer os.Remove(tempFile.Name())
-	defer tempFile.Close()
 
 	_, err = io.Copy(tempFile, src)
+	tempFile.Close()
 	if err != nil {
+		os.Remove(tempFile.Name())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file sementara"})
 		return
 	}
 
-	materiList, err := h.service.ProcessAndSaveMateri(uint(modulID), tempFile.Name())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	tempFilePath := tempFile.Name()
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Materi berhasil diproses dan disimpan",
-		"jumlah":  len(materiList),
-		"data":    materiList,
+	go func() {
+		defer os.Remove(tempFilePath)
+
+		materiList, err := h.service.ProcessAndSaveMateri(uint(modulID), tempFilePath)
+		if err != nil {
+			log.Printf("[background] gagal memproses materi untuk modul %d: %v", modulID, err)
+			return
+		}
+		log.Printf("[background] berhasil memproses %d materi untuk modul %d", len(materiList), modulID)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "PDF sedang diproses di background, cek detail modul beberapa saat lagi",
 	})
 }
