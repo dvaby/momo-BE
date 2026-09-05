@@ -51,7 +51,7 @@ func (r *modulRepository) FindByGuruID(guruID uint) ([]model.Modul, error) {
 
 func (r *modulRepository) FindByIDAndGuruID(id uint, guruID uint) (*model.Modul, error) {
 	var modul model.Modul
-	err := r.db.Where("id = ? AND guru_id = ?", id, guruID).First(&modul).Error
+	err := r.db.Preload("Materi").Preload("Soal").Where("id = ? AND guru_id = ?", id, guruID).First(&modul).Error
 	if err != nil {
 		return nil, err
 	}

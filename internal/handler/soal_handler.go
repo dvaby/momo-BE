@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -20,7 +21,6 @@ func NewSoalHandler(service *service.SoalService) *SoalHandler {
 }
 
 func (h *SoalHandler) UploadSoal(c *gin.Context) {
-	// FIX: Ambil guru_id dari context
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -38,6 +38,13 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	jenis := model.JenisSoal(jenisParam)
 	if jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		return
+	}
+
+	// Validasi kepemilikan Modul dilakukan SEKARANG (synchronous), bukan di background,
+	// supaya guru langsung tahu kalau ditolak, tanpa nunggu proses PDF/AI selesai dulu.
+	if err := h.service.ValidateModulOwnership(uint(modulID), guruID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -59,38 +66,37 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat file sementara"})
 		return
 	}
-	defer os.Remove(tempFile.Name())
-	defer tempFile.Close()
 
 	_, err = io.Copy(tempFile, src)
+	tempFile.Close() // tutup sekarang juga, bukan lewat defer, karena goroutine di bawah butuh path-nya, bukan handle Go yang sama
 	if err != nil {
+		os.Remove(tempFile.Name())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file sementara"})
 		return
 	}
 
-	// FIX: Pass guruID ke service untuk memvalidasi kepemilikan modul_id
-	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFile.Name(), guruID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	tempFilePath := tempFile.Name()
 
-	// FIX: Mapping ke DTO untuk mencegah kebocoran KunciJawaban pada raw DB Model
-	responseData := make([]SoalResponse, 0, len(soalList))
-	for _, soal := range soalList {
-		responseData = append(responseData, ToSoalResponse(soal))
-	}
+	// Proses berat (ekstrak PDF + panggil AI Service + simpan) dikerjakan di background,
+	// TIDAK menahan response HTTP ini. Guru/FE polling GET /modul/:id/soal untuk lihat hasilnya nanti.
+	go func() {
+		defer os.Remove(tempFilePath)
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Soal berhasil diproses dan disimpan",
+		soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFilePath, guruID)
+		if err != nil {
+			log.Printf("[background] gagal memproses soal untuk modul %d: %v", modulID, err)
+			return
+		}
+		log.Printf("[background] berhasil memproses %d soal untuk modul %d", len(soalList), modulID)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi",
 		"jenis":   jenis,
-		"jumlah":  len(responseData),
-		"data":    responseData,
 	})
 }
 
 func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
-	// FIX: Safe type checking untuk kelas_id
 	kelasID, ok := getUintFromContext(c, "kelas_id")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
@@ -122,7 +128,6 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 		return
 	}
 
-	// FIX: Hapus logika r.Shuffle pada soal jawaban. Mapping langsung ke DTO.
 	responseData := make([]SoalResponse, 0, len(soalList))
 	for _, soal := range soalList {
 		responseData = append(responseData, ToSoalResponse(soal))
