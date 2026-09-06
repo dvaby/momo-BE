@@ -16,7 +16,7 @@ func main() {
 	db := database.Connect(cfg)
 
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
-	emailClient := emailsender.NewClient(cfg.ResendAPIKey)
+	emailClient := emailsender.NewClient(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFromName)
 
 	guruRepo := repository.NewGuruRepository(db)
 	guruService := service.NewGuruService(guruRepo, emailClient, cfg.AppBaseURL)

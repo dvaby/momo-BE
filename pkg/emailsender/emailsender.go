@@ -1,65 +1,55 @@
 package emailsender
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/smtp"
 )
 
 type Client struct {
-	apiKey     string
-	httpClient *http.Client
+	host     string
+	port     string
+	username string
+	password string
+	fromName string
 }
 
-func NewClient(apiKey string) *Client {
+func NewClient(host, port, username, password, fromName string) *Client {
 	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		host:     host,
+		port:     port,
+		username: username,
+		password: password,
+		fromName: fromName,
 	}
-}
-
-type resendRequest struct {
-	From    string   `json:"from"`
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
-	HTML    string   `json:"html"`
 }
 
 func (c *Client) SendVerificationEmail(toEmail string, namaGuru string, verifyLink string) error {
-	body := resendRequest{
-		From:    "Momo <onboarding@resend.dev>",
-		To:      []string{toEmail},
-		Subject: "Verifikasi Email Akun Guru Momo",
-		HTML: fmt.Sprintf(`
-			<h2>Halo, %s!</h2>
-			<p>Terima kasih sudah mendaftar sebagai Guru di aplikasi Momo.</p>
-			<p>Klik tombol di bawah untuk memverifikasi email kamu:</p>
-			<p><a href="%s" style="background:#4F46E5;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Verifikasi Email</a></p>
-			<p>Atau salin link berikut: %s</p>
-		`, namaGuru, verifyLink, verifyLink),
-	}
+	subject := "Verifikasi Email Akun Guru Momo"
+	body := fmt.Sprintf(`
+		<h2>Halo, %s!</h2>
+		<p>Terima kasih sudah mendaftar sebagai Guru di aplikasi Momo.</p>
+		<p>Klik tombol di bawah untuk memverifikasi email kamu:</p>
+		<p><a href="%s" style="background:#4F46E5;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">Verifikasi Email</a></p>
+		<p>Atau salin link berikut: %s</p>
+	`, namaGuru, verifyLink, verifyLink)
 
-	jsonData, err := json.Marshal(body)
+	msg := []byte(fmt.Sprintf(
+		"From: %s <%s>\r\n"+
+			"To: %s\r\n"+
+			"Subject: %s\r\n"+
+			"MIME-Version: 1.0\r\n"+
+			"Content-Type: text/html; charset=UTF-8\r\n"+
+			"\r\n"+
+			"%s\r\n",
+		c.fromName, c.username, toEmail, subject, body,
+	))
+
+	auth := smtp.PlainAuth("", c.username, c.password, c.host)
+	addr := c.host + ":" + c.port
+
+	err := smtp.SendMail(addr, auth, c.username, []string{toEmail}, msg)
 	if err != nil {
-		return fmt.Errorf("gagal encode request email: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.resend.com/emails", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("gagal membuat request email: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("gagal mengirim email: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Resend merespons dengan status %d", resp.StatusCode)
+		return fmt.Errorf("gagal mengirim email via SMTP: %w", err)
 	}
 
 	return nil

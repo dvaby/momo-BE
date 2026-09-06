@@ -17,7 +17,11 @@ type Config struct {
 	ServerPort         string
 	AIServiceURL       string
 	CORSAllowedOrigins string
-	ResendAPIKey       string
+	SMTPHost           string
+	SMTPPort           string
+	SMTPUsername       string
+	SMTPPassword       string
+	SMTPFromName       string
 	AppBaseURL         string
 }
 
@@ -42,6 +46,15 @@ func LoadConfig() *Config {
 		appBaseURL = "http://localhost:8080"
 	}
 
+		smtpHost := os.Getenv("SMTP_HOST")
+	if smtpHost == "" {
+		smtpHost = "smtp.gmail.com"
+	}
+	smtpPort := os.Getenv("SMTP_PORT")
+	if smtpPort == "" {
+		smtpPort = "587"
+	}
+
 	return &Config{
 		DBHost:             os.Getenv("DB_HOST"),
 		DBPort:             os.Getenv("DB_PORT"),
@@ -52,7 +65,11 @@ func LoadConfig() *Config {
 		ServerPort:         os.Getenv("SERVER_PORT"),
 		AIServiceURL:       os.Getenv("AI_SERVICE_URL"),
 		CORSAllowedOrigins: corsOrigins,
-		ResendAPIKey:       os.Getenv("RESEND_API_KEY"),
 		AppBaseURL:         appBaseURL,
+		SMTPHost:     		smtpHost,
+		SMTPPort:     		smtpPort,
+		SMTPUsername: 		os.Getenv("SMTP_USERNAME"),
+		SMTPPassword: 		os.Getenv("SMTP_PASSWORD"),
+		SMTPFromName: 		os.Getenv("SMTP_FROM_NAME"),
 	}
 }
