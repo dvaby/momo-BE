@@ -23,6 +23,7 @@ type Config struct {
 	SMTPPassword       string
 	SMTPFromName       string
 	AppBaseURL         string
+	FEVerifyRedirectURL string
 }
 
 func LoadConfig() *Config {
@@ -54,6 +55,11 @@ func LoadConfig() *Config {
 	if smtpPort == "" {
 		smtpPort = "587"
 	}
+	
+	feVerifyURL := os.Getenv("FE_VERIFY_REDIRECT_URL")
+	if feVerifyURL == "" {
+		feVerifyURL = "http://localhost:3000/email-verified"
+	}
 
 	return &Config{
 		DBHost:             os.Getenv("DB_HOST"),
@@ -71,5 +77,6 @@ func LoadConfig() *Config {
 		SMTPUsername: 		os.Getenv("SMTP_USERNAME"),
 		SMTPPassword: 		os.Getenv("SMTP_PASSWORD"),
 		SMTPFromName: 		os.Getenv("SMTP_FROM_NAME"),
+		FEVerifyRedirectURL: feVerifyURL,
 	}
 }

@@ -20,7 +20,7 @@ func main() {
 
 	guruRepo := repository.NewGuruRepository(db)
 	guruService := service.NewGuruService(guruRepo, emailClient, cfg.AppBaseURL)
-	guruHandler := handler.NewGuruHandler(guruService)
+	guruHandler := handler.NewGuruHandler(guruService, cfg.FEVerifyRedirectURL)
 
 	modulRepo := repository.NewModulRepository(db)
 	modulService := service.NewModulService(modulRepo)

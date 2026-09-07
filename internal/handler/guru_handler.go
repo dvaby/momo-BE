@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 
@@ -10,11 +11,12 @@ import (
 )
 
 type GuruHandler struct {
-	guruService service.GuruService
+	guruService  service.GuruService
+	feVerifyURL  string
 }
 
-func NewGuruHandler(guruService service.GuruService) *GuruHandler {
-	return &GuruHandler{guruService: guruService}
+func NewGuruHandler(guruService service.GuruService, feVerifyURL string) *GuruHandler {
+	return &GuruHandler{guruService: guruService, feVerifyURL: feVerifyURL}
 }
 
 func (h *GuruHandler) Register(c *gin.Context) {
@@ -58,14 +60,14 @@ func (h *GuruHandler) Login(c *gin.Context) {
 func (h *GuruHandler) VerifyEmail(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "token wajib disertakan"})
+		c.Redirect(http.StatusFound, h.feVerifyURL+"?status=error&message=Token+tidak+disertakan")
 		return
 	}
 
 	if err := h.guruService.VerifyEmail(token); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.Redirect(http.StatusFound, h.feVerifyURL+"?status=error&message="+url.QueryEscape(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "email berhasil diverifikasi, silakan login"})
+	c.Redirect(http.StatusFound, h.feVerifyURL+"?status=success")
 }
