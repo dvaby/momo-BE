@@ -8,21 +8,19 @@ import (
 )
 
 type Config struct {
-	DBHost             string
-	DBPort             string
-	DBUser             string
-	DBPassword         string
-	DBName             string
-	DBSSLMode          string
-	ServerPort         string
-	AIServiceURL       string
-	CORSAllowedOrigins string
-	SMTPHost           string
-	SMTPPort           string
-	SMTPUsername       string
-	SMTPPassword       string
-	SMTPFromName       string
-	AppBaseURL         string
+	DBHost              string
+	DBPort              string
+	DBUser              string
+	DBPassword          string
+	DBName              string
+	DBSSLMode           string
+	ServerPort          string
+	AIServiceURL        string
+	CORSAllowedOrigins  string
+	BrevoAPIKey         string
+	BrevoSenderEmail    string
+	BrevoSenderName     string
+	AppBaseURL          string
 	FEVerifyRedirectURL string
 }
 
@@ -47,36 +45,25 @@ func LoadConfig() *Config {
 		appBaseURL = "http://localhost:8080"
 	}
 
-		smtpHost := os.Getenv("SMTP_HOST")
-	if smtpHost == "" {
-		smtpHost = "smtp.gmail.com"
-	}
-	smtpPort := os.Getenv("SMTP_PORT")
-	if smtpPort == "" {
-		smtpPort = "587"
-	}
-	
 	feVerifyURL := os.Getenv("FE_VERIFY_REDIRECT_URL")
 	if feVerifyURL == "" {
 		feVerifyURL = "http://localhost:3000/email-verified"
 	}
 
 	return &Config{
-		DBHost:             os.Getenv("DB_HOST"),
-		DBPort:             os.Getenv("DB_PORT"),
-		DBUser:             os.Getenv("DB_USER"),
-		DBPassword:         os.Getenv("DB_PASSWORD"),
-		DBName:             os.Getenv("DB_NAME"),
-		DBSSLMode:          sslMode,
-		ServerPort:         os.Getenv("SERVER_PORT"),
-		AIServiceURL:       os.Getenv("AI_SERVICE_URL"),
-		CORSAllowedOrigins: corsOrigins,
-		AppBaseURL:         appBaseURL,
-		SMTPHost:     		smtpHost,
-		SMTPPort:     		smtpPort,
-		SMTPUsername: 		os.Getenv("SMTP_USERNAME"),
-		SMTPPassword: 		os.Getenv("SMTP_PASSWORD"),
-		SMTPFromName: 		os.Getenv("SMTP_FROM_NAME"),
+		DBHost:              os.Getenv("DB_HOST"),
+		DBPort:              os.Getenv("DB_PORT"),
+		DBUser:              os.Getenv("DB_USER"),
+		DBPassword:          os.Getenv("DB_PASSWORD"),
+		DBName:              os.Getenv("DB_NAME"),
+		DBSSLMode:           sslMode,
+		ServerPort:          os.Getenv("SERVER_PORT"),
+		AIServiceURL:        os.Getenv("AI_SERVICE_URL"),
+		CORSAllowedOrigins:  corsOrigins,
+		BrevoAPIKey:         os.Getenv("BREVO_API_KEY"),
+		BrevoSenderEmail:    os.Getenv("BREVO_SENDER_EMAIL"),
+		BrevoSenderName:     os.Getenv("BREVO_SENDER_NAME"),
+		AppBaseURL:          appBaseURL,
 		FEVerifyRedirectURL: feVerifyURL,
 	}
 }

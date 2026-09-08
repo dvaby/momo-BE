@@ -1,5 +1,4 @@
 services:
-  # Service Backend (Golang)
   app:
     build:
       context: .
@@ -8,24 +7,33 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - PORT=8080
+      # --- OVERRIDE LOCAL DEV (Wajib untuk menimpa .env Production) ---
       - DB_HOST=db
       - DB_PORT=5432
       - DB_USER=postgres
       - DB_PASSWORD=secretpassword
       - DB_NAME=momo_lms
       - DB_SSLMODE=disable
-      - CORS_ALLOWED_ORIGINS=http://localhost:3000
-    env_file:
-      - .env
+      
+      # --- APP SETTINGS ---
+      - SERVER_PORT=8080
+      - AI_SERVICE_URL=https://ai-service-tunanetra.vercel.app
+      - JWT_SECRET=cb2b654da996271e52beac0d93d45c423631b73e69d779ab46abf6b05008f91c
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+      - GIN_MODE=debug
+      - APP_BASE_URL=http://localhost:8080
+      - FE_VERIFY_REDIRECT_URL=http://localhost:3000/email-verified
+      
+      # --- BREVO SETTINGS (Diambil dari .env kamu) ---
+      - BREVO_API_KEY=
+      - BREVO_SENDER_EMAIL=dapinmail@gmail.com
+      - BREVO_SENDER_NAME=Momo Platform
+      
     depends_on:
       db:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: always
 
-  # Service Database (PostgreSQL)
   db:
     image: postgres:16-alpine
     container_name: momo_postgres

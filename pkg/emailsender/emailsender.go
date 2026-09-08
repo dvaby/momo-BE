@@ -1,31 +1,38 @@
 package emailsender
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"net/smtp"
+	"net/http"
+	"time"
 )
 
 type Client struct {
-	host     string
-	port     string
-	username string
-	password string
-	fromName string
+	apiKey      string
+	senderEmail string
+	senderName  string
 }
 
-func NewClient(host, port, username, password, fromName string) *Client {
+func NewClient(apiKey, senderEmail, senderName string) *Client {
 	return &Client{
-		host:     host,
-		port:     port,
-		username: username,
-		password: password,
-		fromName: fromName,
+		apiKey:      apiKey,
+		senderEmail: senderEmail,
+		senderName:  senderName,
 	}
 }
 
+type brevoEmailRequest struct {
+	Sender      map[string]string   `json:"sender"`
+	To          []map[string]string `json:"to"`
+	Subject     string              `json:"subject"`
+	HTMLContent string              `json:"htmlContent"`
+}
+
 func (c *Client) SendVerificationEmail(toEmail string, namaGuru string, verifyLink string) error {
-	subject := "Verifikasi Email Akun Guru Momo"
-	body := fmt.Sprintf(`
+	url := "https://api.brevo.com/v3/smtp/email"
+
+	htmlContent := fmt.Sprintf(`
 		<h2>Halo, %s!</h2>
 		<p>Terima kasih sudah mendaftar sebagai Guru di aplikasi Momo.</p>
 		<p>Klik tombol di bawah untuk memverifikasi email kamu:</p>
@@ -33,23 +40,44 @@ func (c *Client) SendVerificationEmail(toEmail string, namaGuru string, verifyLi
 		<p>Atau salin link berikut: %s</p>
 	`, namaGuru, verifyLink, verifyLink)
 
-	msg := []byte(fmt.Sprintf(
-		"From: %s <%s>\r\n"+
-			"To: %s\r\n"+
-			"Subject: %s\r\n"+
-			"MIME-Version: 1.0\r\n"+
-			"Content-Type: text/html; charset=UTF-8\r\n"+
-			"\r\n"+
-			"%s\r\n",
-		c.fromName, c.username, toEmail, subject, body,
-	))
+	reqBody := brevoEmailRequest{
+		Sender: map[string]string{
+			"name":  c.senderName,
+			"email": c.senderEmail,
+		},
+		To: []map[string]string{
+			{"email": toEmail},
+		},
+		Subject:     "Verifikasi Email Akun Guru Momo",
+		HTMLContent: htmlContent,
+	}
 
-	auth := smtp.PlainAuth("", c.username, c.password, c.host)
-	addr := c.host + ":" + c.port
-
-	err := smtp.SendMail(addr, auth, c.username, []string{toEmail}, msg)
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("gagal mengirim email via SMTP: %w", err)
+		return fmt.Errorf("gagal memarshal payload email: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("gagal membuat request email: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("api-key", c.apiKey)
+
+	// PENTING: Timeout 10 detik mencegah request menggantung selamanya jika jaringan bermasalah
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gagal mengirim request ke Brevo: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Brevo mengembalikan status error: %d", resp.StatusCode)
 	}
 
 	return nil

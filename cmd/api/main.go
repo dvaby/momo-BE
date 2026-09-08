@@ -16,7 +16,9 @@ func main() {
 	db := database.Connect(cfg)
 
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
-	emailClient := emailsender.NewClient(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFromName)
+	
+	// PERUBAHAN: Inisialisasi menggunakan Brevo, bukan SMTP
+	emailClient := emailsender.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName)
 
 	guruRepo := repository.NewGuruRepository(db)
 	guruService := service.NewGuruService(guruRepo, emailClient, cfg.AppBaseURL)
