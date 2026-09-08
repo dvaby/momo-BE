@@ -18,7 +18,8 @@ func NewKelasHandler(service *service.KelasService) *KelasHandler {
 }
 
 type createKelasRequest struct {
-	Nama string `json:"nama" binding:"required"`
+	Nama          string `json:"nama" binding:"required"`
+	MataPelajaran string `json:"mata_pelajaran" binding:"required"` // BARU: Wajib diisi FE
 }
 
 type assignModulRequest struct {
@@ -39,7 +40,8 @@ func (h *KelasHandler) CreateKelas(c *gin.Context) {
 		return
 	}
 
-	kelas, err := h.service.CreateKelas(guruID, req.Nama)
+	// BARU: Meneruskan mata_pelajaran ke service
+	kelas, err := h.service.CreateKelas(guruID, req.Nama, req.MataPelajaran)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

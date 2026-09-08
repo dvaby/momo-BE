@@ -3,11 +3,12 @@ package model
 import "time"
 
 type Kelas struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	GuruID    uint      `gorm:"not null" json:"guru_id"`
-	NamaKelas string    `gorm:"type:varchar(255);not null" json:"nama_kelas"`
-	KodeKelas string    `gorm:"type:varchar(10);unique;not null" json:"kode_kelas"`
-	Siswa     []Siswa   `gorm:"foreignKey:KelasID" json:"siswa,omitempty"`
-	Modul     []Modul   `gorm:"many2many:kelas_moduls;" json:"modul,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	GuruID        uint      `gorm:"not null" json:"guru_id"`
+	NamaKelas     string    `gorm:"type:varchar(255);not null" json:"nama_kelas"`
+	MataPelajaran string    `gorm:"type:varchar(255);not null" json:"mata_pelajaran"` // BARU: Untuk membedakan pelajaran dalam 1 kelas
+	KodeKelas     string    `gorm:"type:varchar(10);unique;not null" json:"kode_kelas"`
+	Siswa         []Siswa   `gorm:"foreignKey:KelasID" json:"siswa,omitempty"`
+	Modul         []Modul   `gorm:"many2many:kelas_moduls;" json:"modul,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }

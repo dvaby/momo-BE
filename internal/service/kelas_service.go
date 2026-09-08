@@ -17,9 +17,13 @@ func NewKelasService(repo *repository.KelasRepository, modulRepo repository.Modu
 	return &KelasService{repo: repo, modulRepo: modulRepo}
 }
 
-func (s *KelasService) CreateKelas(guruID uint, nama string) (*model.Kelas, error) {
+// BARU: Menambahkan parameter mataPelajaran
+func (s *KelasService) CreateKelas(guruID uint, nama string, mataPelajaran string) (*model.Kelas, error) {
 	if nama == "" {
 		return nil, fmt.Errorf("nama kelas wajib diisi")
+	}
+	if mataPelajaran == "" { // BARU: Validasi mata pelajaran
+		return nil, fmt.Errorf("mata pelajaran wajib diisi")
 	}
 
 	var kode string
@@ -35,9 +39,10 @@ func (s *KelasService) CreateKelas(guruID uint, nama string) (*model.Kelas, erro
 	}
 
 	kelas := &model.Kelas{
-		GuruID:    guruID,
-		NamaKelas: nama,
-		KodeKelas: kode,
+		GuruID:        guruID,
+		NamaKelas:     nama,
+		MataPelajaran: mataPelajaran, // BARU: Disimpan ke database
+		KodeKelas:     kode,          // Tetap 6 digit angka murni!
 	}
 
 	err := s.repo.Create(kelas)
