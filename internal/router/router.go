@@ -74,19 +74,21 @@ func SetupRouter(
 			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
 		}
 
-		guruAuth := api.Group("")
+				guruAuth := api.Group("")
 		guruAuth.Use(middleware.GuruAuthMiddleware())
 		{
-			guruAuth.GET("/modul", modulHandler.GetAllModuls)
-			guruAuth.GET("/modul/:id", modulHandler.GetModulByID)
-			guruAuth.POST("/modul", modulHandler.CreateModul)
-			guruAuth.POST("/modul/:id/materi", materiHandler.UploadMateri)
-			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
+			// ... (route modul tetap sama) ...
 
+			// --- KELAS ROUTES (LENGKAP) ---
 			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
+			guruAuth.GET("/kelas", kelasHandler.GetKelasGuru)       // <-- TAMBAHKAN BARIS INI
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
+			guruAuth.PUT("/kelas/:id", kelasHandler.UpdateKelas)    // <-- PASTIKAN ADA
+			guruAuth.DELETE("/kelas/:id", kelasHandler.DeleteKelas) // <-- PASTIKAN ADA
+			
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)
+			guruAuth.DELETE("/kelas/:id/modul/:modul_id", kelasHandler.RemoveModul) // <-- PASTIKAN ADA
 
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
 		}
