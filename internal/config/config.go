@@ -22,6 +22,7 @@ type Config struct {
 	BrevoSenderName     string
 	AppBaseURL          string
 	FEVerifyRedirectURL string
+	JWTSecret           string
 }
 
 func LoadConfig() *Config {
@@ -65,5 +66,6 @@ func LoadConfig() *Config {
 		BrevoSenderName:     os.Getenv("BREVO_SENDER_NAME"),
 		AppBaseURL:          appBaseURL,
 		FEVerifyRedirectURL: feVerifyURL,
+		JWTSecret:           os.Getenv("JWT_SECRET"),
 	}
 }

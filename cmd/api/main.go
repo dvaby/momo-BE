@@ -16,6 +16,7 @@ func main() {
 	db := database.Connect(cfg)
 
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
+	sseHub := handler.NewSSEHub()
 	
 	// PERUBAHAN: Inisialisasi menggunakan Brevo, bukan SMTP
 	emailClient := emailsender.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName)
@@ -36,7 +37,7 @@ func main() {
 
 	kelasRepo := repository.NewKelasRepository(db)
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
-	kelasHandler := handler.NewKelasHandler(kelasService)
+	kelasHandler := handler.NewKelasHandler(kelasService, sseHub)
 
 	soalRepo := repository.NewSoalRepository(db)
 	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient)

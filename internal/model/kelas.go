@@ -6,7 +6,7 @@ type Kelas struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	GuruID        uint      `gorm:"not null" json:"guru_id"`
 	NamaKelas     string    `gorm:"type:varchar(255);not null" json:"nama_kelas"`
-	MataPelajaran string    `gorm:"type:varchar(255)" json:"mata_pelajaran"` // <-- DIUBAH: HAPUS "not null"
+	MataPelajaran string    `gorm:"type:varchar(255)" json:"mata_pelajaran"`
 	KodeKelas     string    `gorm:"type:varchar(10);unique;not null" json:"kode_kelas"`
 	Siswa         []Siswa   `gorm:"foreignKey:KelasID" json:"siswa,omitempty"`
 	Modul         []Modul   `gorm:"many2many:kelas_moduls;" json:"modul,omitempty"`
