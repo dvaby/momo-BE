@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,7 +23,16 @@ func NewGuruHandler(guruService service.GuruService, feVerifyURL string) *GuruHa
 func (h *GuruHandler) Register(c *gin.Context) {
 	var req model.RegisterGuruRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		errMsg := "Mohon lengkapi semua field dengan benar"
+		errStr := err.Error()
+		if strings.Contains(errStr, "Nama") || strings.Contains(errStr, "nama") {
+			errMsg = "Nama wajib diisi (minimal 2 karakter)"
+		} else if strings.Contains(errStr, "Email") || strings.Contains(errStr, "email") {
+			errMsg = "Format email tidak valid"
+		} else if strings.Contains(errStr, "Password") || strings.Contains(errStr, "password") {
+			errMsg = "Password minimal 6 karakter"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		return
 	}
 
@@ -41,7 +51,14 @@ func (h *GuruHandler) Register(c *gin.Context) {
 func (h *GuruHandler) Login(c *gin.Context) {
 	var req model.LoginGuruRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		errMsg := "Mohon lengkapi semua field dengan benar"
+		errStr := err.Error()
+		if strings.Contains(errStr, "Email") || strings.Contains(errStr, "email") {
+			errMsg = "Format email tidak valid"
+		} else if strings.Contains(errStr, "Password") || strings.Contains(errStr, "password") {
+			errMsg = "Password wajib diisi"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 		return
 	}
 

@@ -84,3 +84,24 @@ func (r *KelasRepository) IsModulInKelas(kelasID, modulID uint) (bool, error) {
 	err := r.db.Table("kelas_moduls").Where("kelas_id = ? AND modul_id = ?", kelasID, modulID).Count(&count).Error
 	return count > 0, err
 }
+
+// FindByGuruIDWithPagination mengambil daftar kelas dengan pagination
+func (r *KelasRepository) FindByGuruIDWithPagination(guruID uint, limit, offset int) ([]model.Kelas, int64, error) {
+	var kelass []model.Kelas
+	var total int64
+
+	if err := r.db.Model(&model.Kelas{}).Where("guru_id = ?", guruID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.db.Preload("Siswa").Preload("Modul").
+		Where("guru_id = ?", guruID).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&kelass).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return kelass, total, nil
+}

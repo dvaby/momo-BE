@@ -14,14 +14,14 @@ func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "header Authorization tidak ditemukan"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token tidak ditemukan. Silakan login kembali.", "code": "TOKEN_MISSING"})
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "format header Authorization harus 'Bearer <token>'"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Format header Authorization harus 'Bearer <token>'", "code": "TOKEN_INVALID_FORMAT"})
 			c.Abort()
 			return
 		}
@@ -30,7 +30,11 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		claims, err := jwtutil.VerifyToken(tokenString)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "token siswa tidak valid atau sudah kedaluwarsa"})
+			errMsg := "Token siswa tidak valid. Silakan login kembali."
+			if strings.Contains(err.Error(), "expired") {
+				errMsg = "Sesi Anda telah berakhir. Silakan login kembali."
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg, "code": "TOKEN_INVALID"})
 			c.Abort()
 			return
 		}
@@ -47,14 +51,14 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "header Authorization tidak ditemukan"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token tidak ditemukan. Silakan login kembali.", "code": "TOKEN_MISSING"})
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "format header Authorization harus 'Bearer <token>'"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Format header Authorization harus 'Bearer <token>'", "code": "TOKEN_INVALID_FORMAT"})
 			c.Abort()
 			return
 		}
@@ -63,7 +67,11 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 
 		claims, err := jwtutil.VerifyGuruToken(tokenString)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "token guru tidak valid atau sudah kedaluwarsa"})
+			errMsg := "Token guru tidak valid. Silakan login kembali."
+			if strings.Contains(err.Error(), "expired") {
+				errMsg = "Sesi Anda telah berakhir. Silakan login kembali."
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg, "code": "TOKEN_INVALID"})
 			c.Abort()
 			return
 		}

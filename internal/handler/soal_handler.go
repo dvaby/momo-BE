@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"momo-be/internal/model"
@@ -53,6 +55,26 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "File PDF wajib dilampirkan dengan field 'file'"})
 		return
 	}
+
+	// --- POLISH: Validasi Ukuran & Tipe File ---
+	const maxSize = 5 * 1024 * 1024 // 5MB
+	if file.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Ukuran file terlalu besar. Maksimal 5MB.",
+			"code":  "FILE_TOO_LARGE",
+		})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".pdf" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Hanya file PDF yang diperbolehkan",
+			"code":  "INVALID_FILE_TYPE",
+		})
+		return
+	}
+	// ------------------------------------------
 
 	src, err := file.Open()
 	if err != nil {

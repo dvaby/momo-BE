@@ -133,3 +133,8 @@ func (s *KelasService) JoinKelasWithKode(kodeKelas, namaSiswa string) (*model.Ke
 
 	return kelas, nil
 }
+
+// GetKelasByGuruIDPaginated mengambil kelas dengan pagination
+func (s *KelasService) GetKelasByGuruIDPaginated(guruID uint, limit, offset int) ([]model.Kelas, int64, error) {
+	return s.repo.FindByGuruIDWithPagination(guruID, limit, offset)
+}

@@ -217,13 +217,32 @@ func (h *KelasHandler) GetKelasGuru(c *gin.Context) {
 	}
 	guruID := guruIDVal.(uint)
 
-	kelass, err := h.service.GetKelasByGuruID(guruID)
+	// Parse query parameters dengan default value
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+
+	kelass, total, err := h.service.GetKelasByGuruIDPaginated(guruID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, kelass)
+	c.JSON(http.StatusOK, gin.H{
+		"data": kelass,
+		"meta": gin.H{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"total_page": (total + int64(limit) - 1) / int64(limit),
+		},
+	})
 }
 
 // ===========================
