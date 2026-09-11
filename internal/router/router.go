@@ -94,7 +94,7 @@ func SetupRouter(
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
 			guruAuth.PUT("/kelas/:id", kelasHandler.UpdateKelas)
 			guruAuth.DELETE("/kelas/:id", kelasHandler.DeleteKelas)
-			
+
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)
 			guruAuth.DELETE("/kelas/:id/modul/:modul_id", kelasHandler.RemoveModul)

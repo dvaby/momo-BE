@@ -9,12 +9,12 @@ import "time"
 // SiswaID+SoalID — aturan ini ditegakkan di service layer, bukan di
 // level model/database.
 type JawabanSiswa struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	SiswaID            uint      `json:"siswa_id"`
-	SoalID             uint      `json:"soal_id"`
-	JawabanMentah      string    `json:"jawaban_mentah"`
-	JawabanTerdeteksi  string    `json:"jawaban_terdeteksi"`
-	Benar              bool      `json:"benar"`
-	Feedback           string    `json:"feedback"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	SiswaID           uint      `gorm:"not null;index;index:idx_jawaban_siswa_soal,priority:1" json:"siswa_id"`
+	SoalID            uint      `gorm:"not null;index;index:idx_jawaban_siswa_soal,priority:2" json:"soal_id"`
+	JawabanMentah     string    `json:"jawaban_mentah"`
+	JawabanTerdeteksi string    `json:"jawaban_terdeteksi"`
+	Benar             bool      `json:"benar"`
+	Feedback          string    `json:"feedback"`
+	CreatedAt         time.Time `json:"created_at"`
 }

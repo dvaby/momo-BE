@@ -52,7 +52,7 @@ type EvaluateResponseData struct {
 }
 
 type EvaluateResponse struct {
-	Success bool                  `json:"success"`
-	Message string                `json:"message,omitempty"`
-	Data    EvaluateResponseData  `json:"data"`
+	Success bool                 `json:"success"`
+	Message string               `json:"message,omitempty"`
+	Data    EvaluateResponseData `json:"data"`
 }

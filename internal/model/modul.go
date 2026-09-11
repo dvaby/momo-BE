@@ -4,7 +4,7 @@ import "time"
 
 type Modul struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	GuruID    uint      `gorm:"default:1;not null" json:"guru_id"` // Tambahkan default:1
+	GuruID    uint      `gorm:"not null;index" json:"guru_id"`
 	Nama      string    `gorm:"not null" json:"nama"`
 	Deskripsi string    `json:"deskripsi"`
 	CreatedAt time.Time `json:"created_at"`

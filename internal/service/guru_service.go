@@ -47,8 +47,8 @@ func (s *guruService) Register(req *model.RegisterGuruRequest) (*model.Guru, err
 		Nama:              req.Nama,
 		Email:             req.Email,
 		Password:          string(hashedPassword),
-		EmailVerified:     true, 
-		VerificationToken: "", 
+		EmailVerified:     true,
+		VerificationToken: "",
 	}
 
 	if err := s.guruRepo.Create(guru); err != nil {

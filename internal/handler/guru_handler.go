@@ -11,8 +11,8 @@ import (
 )
 
 type GuruHandler struct {
-	guruService  service.GuruService
-	feVerifyURL  string
+	guruService service.GuruService
+	feVerifyURL string
 }
 
 func NewGuruHandler(guruService service.GuruService, feVerifyURL string) *GuruHandler {

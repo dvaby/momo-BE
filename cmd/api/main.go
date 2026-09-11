@@ -17,7 +17,7 @@ func main() {
 
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
 	sseHub := handler.NewSSEHub()
-	
+
 	// PERUBAHAN: Inisialisasi menggunakan Brevo, bukan SMTP
 	emailClient := emailsender.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName)
 

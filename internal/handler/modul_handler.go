@@ -125,7 +125,7 @@ func (h *ModulHandler) StreamStatusModul(c *gin.Context) {
 
 		// Jika belum selesai, kirim event 'processing'
 		c.SSEvent("processing", "AI sedang membaca soal...")
-		
+
 		// Tunggu 3 detik sebelum cek lagi agar tidak membebani database
 		time.Sleep(3 * time.Second)
 		return true // Lanjutkan stream

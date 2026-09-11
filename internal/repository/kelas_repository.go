@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"momo-be/internal/model"
 	"gorm.io/gorm"
+	"momo-be/internal/model"
 )
 
 type KelasRepository struct {

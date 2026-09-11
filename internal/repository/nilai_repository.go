@@ -65,7 +65,7 @@ func (r *NilaiRepository) GetRekapNilai(kelasID uint, modulID uint, jenis string
 		GROUP BY s.id, s.nama
 		ORDER BY s.nama ASC
 	`
-	
+
 	// Masukkan parameter terakhir untuk kelas_id
 	args = append(args, kelasID)
 
