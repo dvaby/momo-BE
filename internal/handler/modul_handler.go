@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -89,4 +91,43 @@ func (h *ModulHandler) GetModulByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, ToModulDetailResponse(*modul))
+}
+
+// StreamStatusModul adalah endpoint SSE untuk real-time update status modul
+func (h *ModulHandler) StreamStatusModul(c *gin.Context) {
+	modulIDParam := c.Param("id")
+	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	// Set header untuk SSE (Server-Sent Events)
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+
+	// Streaming loop
+	c.Stream(func(w io.Writer) bool {
+		// PERBAIKAN: Gunakan h.modulService dan method GetByID
+		modul, err := h.modulService.GetByID(uint(modulID))
+		if err != nil {
+			c.SSEvent("error", "Modul tidak ditemukan")
+			return false // Stop stream
+		}
+
+		// Jika soal sudah ada (AI selesai), kirim event 'done'
+		if modul.Soal != nil && len(modul.Soal) > 0 {
+			c.SSEvent("done", modul)
+			return false // Stop stream karena selesai
+		}
+
+		// Jika belum selesai, kirim event 'processing'
+		c.SSEvent("processing", "AI sedang membaca soal...")
+		
+		// Tunggu 3 detik sebelum cek lagi agar tidak membebani database
+		time.Sleep(3 * time.Second)
+		return true // Lanjutkan stream
+	})
 }

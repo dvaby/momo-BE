@@ -91,8 +91,11 @@ func SetupRouter(
 			guruAuth.DELETE("/kelas/:id/modul/:modul_id", kelasHandler.RemoveModul) // <-- PASTIKAN ADA
 
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
+			// Tambahkan di group yang sesuai (bisa public atau auth)
+			guruAuth.GET("/modul/:id/stream", modulHandler.StreamStatusModul)
 		}
 	}
+	
 
 	return r
 }
