@@ -104,7 +104,7 @@ func SetupRouter(
 			guruAuth.GET("/modul/:id/materi", materiHandler.GetMateriByModul)
 			guruAuth.POST("/modul/:id/materi/manual", materiHandler.CreateMateriManual)
 			guruAuth.PUT("/materi/:id", materiHandler.UpdateMateri)
-			xguruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
+			guruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
 		}
 	}
 
