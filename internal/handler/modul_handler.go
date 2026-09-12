@@ -131,3 +131,77 @@ func (h *ModulHandler) StreamStatusModul(c *gin.Context) {
 		return true // Lanjutkan stream
 	})
 }
+
+// --- DTO untuk Update ---
+
+type updateModulRequest struct {
+	Nama      string `json:"nama"`
+	Deskripsi string `json:"deskripsi"`
+}
+
+// UpdateModul — PUT /api/v1/modul/:id
+func (h *ModulHandler) UpdateModul(c *gin.Context) {
+	guruIDVal, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus guru"})
+		return
+	}
+	guruID := guruIDVal.(uint)
+
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	var req updateModulRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validasi: minimal salah satu field harus diisi
+	if req.Nama == "" && req.Deskripsi == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Minimal salah satu field (nama atau deskripsi) harus diisi"})
+		return
+	}
+
+	modul, err := h.modulService.Update(uint(id), guruID, req.Nama, req.Deskripsi)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Modul berhasil diperbarui",
+		"data":    modul,
+	})
+}
+
+// DeleteModul — DELETE /api/v1/modul/:id
+func (h *ModulHandler) DeleteModul(c *gin.Context) {
+	guruIDVal, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus guru"})
+		return
+	}
+	guruID := guruIDVal.(uint)
+
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	err = h.modulService.Delete(uint(id), guruID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Modul berhasil dihapus beserta semua materi dan soal di dalamnya",
+	})
+}
