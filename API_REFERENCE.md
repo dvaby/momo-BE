@@ -1,7 +1,7 @@
 # API Reference — Momo-BE
 
 Dokumen ini disusun berdasarkan **testing langsung terhadap kode yang berjalan** (bukan asumsi).
-Versi awal: 1 September 2026 · **Update terakhir: 11 September 2026**.
+Versi awal: 1 September 2026 · **Update terakhir: 12 September 2026**.
 Semua contoh request/response di bawah adalah hasil `curl` nyata.
 
 ---
@@ -69,11 +69,7 @@ Kebanyakan error dikembalikan sebagai:
 ```json
 { "error": "pesan error dalam bahasa Indonesia" }
 ```
-Error validasi field (400) kadang menampilkan pesan mentah dari library validasi Go, contoh:
-```json
-{ "error": "Key: 'createModulRequest.Nama' Error:Field validation for 'Nama' failed on the 'required' tag" }
-```
-FE sebaiknya menampilkan pesan generik ("mohon lengkapi form") untuk kasus ini, bukan menampilkan pesan mentah ke pengguna akhir.
+Beberapa error menyertakan field `code` untuk memudahkan FE menangani kasus spesifik (lihat bagian [Error Handling](#error-handling)).
 
 ---
 
@@ -109,6 +105,13 @@ Publik.
 **Error — email sudah terdaftar (400):**
 ```json
 { "error": "email sudah terdaftar" }
+```
+
+**Error — validasi field (400):** pesan sudah ramah, contoh:
+```json
+{ "error": "Nama wajib diisi (minimal 2 karakter)" }
+{ "error": "Format email tidak valid" }
+{ "error": "Password minimal 6 karakter" }
 ```
 
 ### `POST /api/v1/guru/login`
@@ -199,31 +202,111 @@ List semua Modul **milik guru yang sedang login saja**.
 { "error": "Modul tidak ditemukan" }
 ```
 
-### `POST /api/v1/modul/:id/materi`
-Upload PDF materi. `Content-Type: multipart/form-data`, field file bernama **`file`**.
+### 🔄 `POST /api/v1/modul/:id/materi` — SYNCHRONOUS (update 12 Sept)
 
-### `POST /api/v1/modul/:id/soal?jenis=uts`
-Upload PDF soal. `Content-Type: multipart/form-data`, field file **`file`**. Query param `jenis` wajib, salah satu: `harian`, `uts`, `uas`.
+Upload PDF materi untuk dirangkum AI. **Request DITAHAN oleh backend sampai AI selesai merangkum** (biasanya 10–60 detik tergantung ukuran PDF). FE **wajib** menampilkan spinner/loading selama menunggu.
 
-**Response sukses (201):**
+**Headers:**
+```http
+Authorization: Bearer <token_guru>
+Content-Type: multipart/form-data
+```
+**Body:** field file bernama **`file`** (wajib `.pdf`, maksimal **25MB**).
+
+**Response sukses (200 OK) — hasil rangkuman ASLI:**
 ```json
 {
-  "data": [ { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "..." } ],
-  "jenis": "uts", "jumlah": 1,
-  "message": "Soal berhasil diproses dan disimpan"
+  "message": "Materi berhasil diproses",
+  "jumlah": 2,
+  "data": [
+    {
+      "id": 11, "modul_id": 2, "urutan": 1,
+      "judul": "Pengenalan IPA",
+      "konten": "IPA adalah ilmu yang mempelajari...",
+      "created_at": "...", "updated_at": "..."
+    },
+    {
+      "id": 12, "modul_id": 2, "urutan": 2,
+      "judul": "Makhluk Hidup dan Lingkungan",
+      "konten": "...",
+      "created_at": "...", "updated_at": "..."
+    }
+  ]
 }
 ```
-*(`kunci_jawaban` juga tidak muncul di sini.)*
+⚠️ **BREAKING CHANGE dari kontrak lama:** endpoint ini TIDAK LAGI mengembalikan pesan "sedang diproses di background". Panel hasil di FE harus merender array **`data`**, bukan `message`.
+
+**Error (422 Unprocessable Entity):**
+```json
+{
+  "error": "Gagal memproses materi dari PDF. Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil.",
+  "code": "MATERI_PROCESSING_FAILED"
+}
+```
+Varian pesan `error` lain yang mungkin:
+- `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar.`
+- `...AI tidak menemukan konten materi yang valid. Pastikan PDF berisi materi pembelajaran, bukan soal.`
+
+**Error validasi file (400):**
+```json
+{ "error": "Ukuran file terlalu besar. Maksimal 25MB.", "code": "FILE_TOO_LARGE" }
+{ "error": "Hanya file PDF yang diperbolehkan", "code": "INVALID_FILE_TYPE" }
+```
+
+**Error kepemilikan (403):**
+```json
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+```
+
+### `POST /api/v1/modul/:id/soal?jenis=uts` — ASYNC (tetap background)
+
+Upload PDF soal. `Content-Type: multipart/form-data`, field file **`file`** (wajib `.pdf`, maksimal **5MB**). Query param `jenis` wajib, salah satu: `harian`, `uts`, `uas`.
+
+⚠️ Berbeda dengan materi, endpoint ini **tetap async**: response langsung kembali, ekstraksi AI berjalan di background.
+
+**Response sukses (202 Accepted):**
+```json
+{
+  "message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi",
+  "jenis": "uts"
+}
+```
+FE harus **polling** `GET /modul/:id/soal?jenis=...` (misal tiap 5 detik) sampai data soal muncul.
+
+**Error kepemilikan (403):** dicek synchronous sebelum proses dimulai:
+```json
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+```
+
+**Error validasi file (400):**
+```json
+{ "error": "Ukuran file terlalu besar. Maksimal 5MB.", "code": "FILE_TOO_LARGE" }
+{ "error": "Hanya file PDF yang diperbolehkan", "code": "INVALID_FILE_TYPE" }
+```
 
 ### `GET /api/v1/modul/:id/soal?jenis=uts`
-⚠️ Endpoint ini dipakai **Guru maupun Siswa** (Siswa butuh Token Siswa, dan Modul-nya harus sudah di-assign ke Kelas siswa itu — lihat bagian C & D). Response sama seperti di atas.
+⚠️ Endpoint ini dipakai **Guru maupun Siswa** (Siswa butuh Token Siswa, dan Modul-nya harus sudah di-assign ke Kelas siswa itu — lihat bagian C & D).
+
+**Response (200):**
+```json
+{
+  "jenis": "uts",
+  "jumlah": 1,
+  "data": [ { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "..." } ]
+}
+```
+
+**Response (404) — soal belum selesai diproses / belum ada:**
+```json
+{ "error": "Belum ada soal untuk modul dan jenis ini" }
+```
 
 ---
 
 ## C. Kelas (Token Guru)
 
 ### `POST /api/v1/kelas`
-🆕 **UPDATE 11 Sept:** field `mata_pelajaran` sekarang **WAJIB** diisi.
+Field `mata_pelajaran` **WAJIB** diisi.
 
 **Request:**
 ```json
@@ -242,18 +325,35 @@ Upload PDF soal. `Content-Type: multipart/form-data`, field file **`file`**. Que
 
 📡 Memicu event SSE `kelas-created`.
 
-### 🆕 `GET /api/v1/kelas`
-List semua kelas **milik guru yang sedang login saja**.
+### 🔄 `GET /api/v1/kelas` — DENGAN PAGINATION (update 12 Sept)
+List semua kelas milik guru yang sedang login.
+
+**Query parameters (opsional):**
+| Param | Default | Keterangan |
+|---|---|---|
+| `page` | `1` | Nomor halaman |
+| `limit` | `10` | Jumlah data per halaman (maks 50) |
+
+**Contoh:** `GET /api/v1/kelas?page=1&limit=10`
 
 **Response (200):**
 ```json
-[
-  {
-    "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika",
-    "kode_kelas": "487137", "created_at": "...", "updated_at": "..."
+{
+  "data": [
+    {
+      "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika",
+      "kode_kelas": "487137", "created_at": "...", "updated_at": "..."
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 10,
+    "total": 3,
+    "total_page": 1
   }
-]
+}
 ```
+⚠️ **BREAKING CHANGE ringan:** response sekarang berbentuk object `{ data, meta }`, bukan array langsung. FE wajib membaca `response.data` untuk list kelas.
 
 ### `GET /api/v1/kelas/:id`
 **Response (200):**
@@ -267,8 +367,8 @@ List semua kelas **milik guru yang sedang login saja**.
 }
 ```
 
-### 🆕 `PUT /api/v1/kelas/:id`
-Update nama dan/atau mata pelajaran kelas. Hanya pemilik kelas yang bisa update (guru lain dapat error).
+### `PUT /api/v1/kelas/:id`
+Update nama dan/atau mata pelajaran kelas. Hanya pemilik kelas yang bisa update.
 
 **Request:** (kirim hanya field yang ingin diubah)
 ```json
@@ -294,7 +394,7 @@ Update nama dan/atau mata pelajaran kelas. Hanya pemilik kelas yang bisa update 
 
 📡 Memicu event SSE `kelas-updated`.
 
-### 🆕 `DELETE /api/v1/kelas/:id`
+### `DELETE /api/v1/kelas/:id`
 Hapus kelas. Hanya pemilik kelas yang bisa menghapus.
 
 **Response (200):**
@@ -334,7 +434,7 @@ Hapus kelas. Hanya pemilik kelas yang bisa menghapus.
 ```
 *(Modul yang di-assign harus milik Guru yang sama dengan pemilik Kelas — kalau tidak, ditolak.)*
 
-### 🆕 `DELETE /api/v1/kelas/:id/modul/:modul_id` (Lepas Modul dari Kelas)
+### `DELETE /api/v1/kelas/:id/modul/:modul_id` (Lepas Modul dari Kelas)
 Melepas tautan modul dari kelas **tanpa** menghapus modul itu sendiri dari akun guru.
 
 **Response (200):**
@@ -382,7 +482,7 @@ Sama seperti bagian B, tapi dengan Token Siswa. Modul harus sudah di-assign ke K
 
 ## E. Real-time Updates / SSE (Token Guru)
 
-🆕 **UPDATE 11 Sept.** Backend menyediakan **Server-Sent Events (SSE)** agar FE tidak perlu polling untuk update data kelas.
+Backend menyediakan **Server-Sent Events (SSE)** agar FE tidak perlu polling untuk update data kelas.
 
 ### `GET /api/v1/kelas/stream`
 Membuka koneksi streaming yang tetap terbuka. Server mengirim event setiap ada perubahan data kelas.
@@ -476,6 +576,7 @@ window.addEventListener('sse-kelas-deleted', (e) => {
 **Tips:**
 - Jika koneksi putus (network error), panggil ulang `connectSSE()` setelah jeda beberapa detik (retry dengan backoff).
 - Satu koneksi per tab browser sudah cukup — semua event kelas masuk lewat satu stream ini.
+- ⚠️ SSE **hanya** untuk event kelas. Untuk status proses SOAL (yang async), tetap gunakan polling `GET /modul/:id/soal`.
 
 ### Test cepat via curl
 ```bash
@@ -498,14 +599,27 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 
 | Code | Arti | Contoh kasus |
 |---|---|---|
-| 200 | OK | GET, PUT, DELETE berhasil, join siswa |
+| 200 | OK | GET, PUT, DELETE berhasil, join siswa, upload materi (sync sukses) |
 | 201 | Created | register guru, buat modul/kelas/siswa, submit jawaban |
-| 400 | Bad Request | validasi gagal, nama duplikat, bukan pemilik resource |
+| 202 | Accepted | upload soal (diproses di background) |
+| 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar / bukan PDF |
 | 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah |
-| 403 | Forbidden | origin CORS tidak diizinkan |
+| 403 | Forbidden | modul/kelas bukan milik user, origin CORS tidak diizinkan |
 | 404 | Not Found | resource tidak ada / bukan milik user yang login |
+| 422 | Unprocessable Entity | proses AI gagal (materi) |
 | 429 | Too Many Requests | rate limit terlampaui |
 | 500 | Internal Server Error | kesalahan tak terduga di server |
+
+### Error Codes (field `code`)
+
+| Code | Kapan muncul | Saran penanganan di FE |
+|---|---|---|
+| `TOKEN_MISSING` | Header Authorization tidak ada | Redirect ke halaman login |
+| `TOKEN_INVALID_FORMAT` | Format header bukan `Bearer <token>` | Perbaiki cara kirim header |
+| `TOKEN_INVALID` | Token tidak valid / kedaluwarsa | Hapus token lama, redirect login. Pesan sudah ramah: "Sesi Anda telah berakhir. Silakan login kembali." |
+| `FILE_TOO_LARGE` | Upload melebihi batas (materi 25MB / soal 5MB) | Tampilkan pesan ukuran maksimal |
+| `INVALID_FILE_TYPE` | File bukan `.pdf` | Tampilkan "hanya PDF yang didukung" |
+| `MATERI_PROCESSING_FAILED` | AI gagal merangkum materi | Tampilkan field `error` apa adanya (sudah ramah) |
 
 ---
 
@@ -515,13 +629,24 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 2. **Lokasi token beda** antara Login Guru (`data.token`) dan Join Siswa (`.token` langsung) — pastikan FE menangani dua struktur berbeda ini.
 3. `GET /modul/:id` mengembalikan field **`judul`** untuk nama Modul, sementara endpoint lain (create/list) pakai `nama` — perhatikan saat parsing response.
 4. **`kunci_jawaban` tidak pernah dikirim** ke endpoint manapun, termasuk ke guru pemilik soal — ini keputusan keamanan yang disengaja.
-5. 🆕 **`mata_pelajaran` wajib** diisi saat membuat kelas sejak 11 Sept 2026 — form FE harus menambahkan field ini.
-6. 🆕 **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
-7. 🆕 Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
+5. 🔄 **Materi sekarang SYNCHRONOUS** (12 Sept): `POST /modul/:id/materi` menahan request 10–60 detik lalu mengembalikan array `data`. FE wajib: (a) tampilkan spinner + disable tombol selama menunggu, (b) render `data`, JANGAN render `message` sebagai isi rangkuman, (c) hapus template statis "Status Pemrosesan Materi" peninggalan kontrak async lama.
+6. 🔄 **`GET /kelas` sekarang berbentuk `{ data, meta }`** karena pagination — FE wajib membaca `response.data`, bukan array langsung.
+7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id/soal?jenis=...` tiap ±5 detik sampai muncul data.
+8. **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
+9. Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
 
 ---
 
 ## Changelog
+
+### 12 September 2026
+- 🔄 **BREAKING:** `POST /api/v1/modul/:id/materi` sekarang **SYNCHRONOUS** — response 200 berisi array `data` rangkuman asli (sebelumnya 202 async dengan pesan status)
+- 🔄 **BREAKING ringan:** `GET /api/v1/kelas` mendukung pagination (`?page=&limit=`) dan response berbentuk `{ data, meta }`
+- ✅ Validasi upload file: materi maks **25MB**, soal maks **5MB**, wajib ekstensi `.pdf` (code `FILE_TOO_LARGE`, `INVALID_FILE_TYPE`)
+- ✅ Pesan error autentikasi lebih ramah + field `code` (`TOKEN_MISSING`, `TOKEN_INVALID_FORMAT`, `TOKEN_INVALID`)
+- ✅ Pesan error validasi register/login lebih manusiawi
+- ✅ Error proses AI materi返回 422 dengan `code: MATERI_PROCESSING_FAILED` dan pesan siap tampil
+- ✅ Timeout AI Service dinaikkan ke 120 detik untuk PDF besar
 
 ### 11 September 2026
 - 🆕 `GET /api/v1/kelas` — list semua kelas milik guru
@@ -531,6 +656,7 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 - 🆕 `GET /api/v1/kelas/stream` — real-time updates via SSE
 - ⚠️ BREAKING: `POST /api/v1/kelas` sekarang wajib menyertakan `mata_pelajaran`
 - ✅ Base URL production ditetapkan: `https://momo-be-production.up.railway.app`
+- ✅ Optimasi performa: index database, connection pooling, keep-warm Neon
 
 ### 1 September 2026
 - Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.
