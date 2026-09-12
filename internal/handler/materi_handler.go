@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -45,6 +47,24 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 		return
 	}
 
+	// --- Validasi file: maks 25MB (PDF materi bisa besar) & wajib .pdf ---
+	const maxSize = 25 * 1024 * 1024 // 25MB
+	if file.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Ukuran file terlalu besar. Maksimal 25MB.",
+			"code":  "FILE_TOO_LARGE",
+		})
+		return
+	}
+	if ext := strings.ToLower(filepath.Ext(file.Filename)); ext != ".pdf" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Hanya file PDF yang diperbolehkan",
+			"code":  "INVALID_FILE_TYPE",
+		})
+		return
+	}
+	// --------------------------------------------------------------------
+
 	src, err := file.Open()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuka file"})
@@ -67,19 +87,41 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 	}
 
 	tempFilePath := tempFile.Name()
+	defer os.Remove(tempFilePath) // aman di-defer karena sekarang synchronous
 
-	go func() {
-		defer os.Remove(tempFilePath)
+	// ============================================================
+	// SYNCHRONOUS: request DITAHAN sampai AI selesai merangkum.
+	// FE tidak akan pernah menerima pesan "sedang diproses" lagi.
+	// ============================================================
+	materiList, err := h.service.ProcessAndSaveMateri(uint(modulID), tempFilePath)
+	if err != nil {
+		log.Printf("[materi] gagal memproses materi untuk modul %d: %v", modulID, err)
 
-		materiList, err := h.service.ProcessAndSaveMateri(uint(modulID), tempFilePath)
-		if err != nil {
-			log.Printf("[background] gagal memproses materi untuk modul %d: %v", modulID, err)
-			return
+		errMsg := "Gagal memproses materi dari PDF. "
+		switch {
+		case strings.Contains(err.Error(), "ekstrak PDF"):
+			errMsg += "File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar."
+		case strings.Contains(err.Error(), "AI Service"), strings.Contains(err.Error(), "timeout"):
+			errMsg += "Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil."
+		case strings.Contains(err.Error(), "tidak menemukan konten"):
+			errMsg += "AI tidak menemukan konten materi yang valid. Pastikan PDF berisi materi pembelajaran, bukan soal."
+		default:
+			errMsg += err.Error()
 		}
-		log.Printf("[background] berhasil memproses %d materi untuk modul %d", len(materiList), modulID)
-	}()
 
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "PDF sedang diproses di background, cek detail modul beberapa saat lagi",
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": errMsg,
+			"code":  "MATERI_PROCESSING_FAILED",
+		})
+		return
+	}
+
+	log.Printf("[materi] berhasil memproses %d materi untuk modul %d", len(materiList), modulID)
+
+	// Hasil rangkuman ASLI langsung dikirim ke FE
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Materi berhasil diproses",
+		"jumlah":  len(materiList),
+		"data":    materiList,
 	})
 }
