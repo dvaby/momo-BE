@@ -170,16 +170,35 @@ Publik. Kode kelas selalu **6 digit angka** (contoh: `"487137"`) — sengaja tan
 
 Semua endpoint di bagian ini **terisolasi per Guru** — Guru A tidak bisa melihat/mengakses Modul milik Guru B (akan dapat `404`/`403`, bukan error khusus, seolah datanya tidak ada).
 
-### `POST /api/v1/modul`
+### 📦 Struktur Data: Modul vs Materi vs Soal
+
+```
+GURU (pemilik)
+ └── MODUL  ← "wadah/unit belajar" (contoh: "Ipa")
+      ├── MATERI  ← ISI belajar (bab/rangkuman)
+      ├── SOAL    ← BANK SOAL (harian/uts/uas)
+      └── tertaut ke KELAS (many2many)
+```
+
+| | **MODUL** | **MATERI** |
+|---|---|---|
+| Level | Wadah/unit | Isi/bab |
+| Field utama | `nama`, `deskripsi` | `judul`, `konten`, `urutan` |
+| Kepunyaan | Langsung milik Guru | Milik Modul (ikut guru pemilik modul) |
+| Cascade | Hapus modul = hapus semua materi & soal di dalamnya | Hapus materi = modul tidak terpengaruh |
+
+---
+
+### `POST /api/v1/modul` — Buat modul baru
 **Request:**
 ```json
-{ "nama": "Modul Retest", "deskripsi": "Deskripsi retest" }
+{ "nama": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5" }
 ```
 **Response (201):**
 ```json
 {
-  "id": 2, "guru_id": 3, "nama": "Modul Retest", "deskripsi": "Deskripsi retest",
-  "created_at": "...", "updated_at": "...", "materi": null, "soal": null
+  "id": 2, "guru_id": 3, "nama": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
+  "created_at": "...", "updated_at": "..."
 }
 ```
 
@@ -191,7 +210,8 @@ List semua Modul **milik guru yang sedang login saja**.
 **Response sukses (200):**
 ```json
 {
-  "id": 2, "judul": "Modul Retest", "deskripsi": "Deskripsi retest",
+  "id": 2, "judul": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
+  "materi": [ ... ],
   "soal": [ { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "..." } ]
 }
 ```
@@ -202,9 +222,60 @@ List semua Modul **milik guru yang sedang login saja**.
 { "error": "Modul tidak ditemukan" }
 ```
 
+### 🆕 `PUT /api/v1/modul/:id` — Update modul (12 Sept 2026)
+
+Update nama dan/atau deskripsi modul. **Minimal salah satu field harus diisi.**
+
+**Request:** (kirim hanya field yang ingin diubah, atau keduanya)
+```json
+{
+  "nama": "Ipa (Updated)",
+  "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5"
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "Modul berhasil diperbarui",
+  "data": {
+    "id": 3, "guru_id": 7, "nama": "Ipa (Updated)",
+    "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
+    "created_at": "...", "updated_at": "..."
+  }
+}
+```
+⚠️ Response **TIDAK** menyertakan `materi` atau `soal` secara default. Gunakan `GET /modul/:id` untuk melihat konten lengkapnya.
+
+**Error — bukan pemilik (400):**
+```json
+{ "error": "modul tidak ditemukan atau bukan milik Anda" }
+```
+
+**Error — field kosong (400):**
+```json
+{ "error": "Minimal salah satu field (nama atau deskripsi) harus diisi" }
+```
+
+### 🆕 `DELETE /api/v1/modul/:id` — Hapus modul (12 Sept 2026)
+
+Hapus modul beserta **semua materi dan soal** di dalamnya (cascade delete).
+
+⚠️ **PERINGATAN:** Operasi ini tidak bisa dibatalkan. Semua materi (hasil AI maupun manual) dan soal (harian/uts/uas) akan ikut terhapus. Tautan modul dengan kelas juga akan terlepas.
+
+**Response (200):**
+```json
+{ "message": "Modul berhasil dihapus beserta semua materi dan soal di dalamnya" }
+```
+
+**Error — bukan pemilik (400):**
+```json
+{ "error": "modul tidak ditemukan atau bukan milik Anda" }
+```
+
 ---
 
-### 🆕 CRUD Materi Manual (12 Sept 2026)
+### CRUD Materi Manual (12 Sept 2026)
 
 Selain upload PDF (yang dirangkum AI), guru juga bisa menulis materi **manual** langsung di form. Materi manual dan hasil AI **bercampur dalam satu list** dan terurut berdasarkan field `urutan`.
 
@@ -701,10 +772,10 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 
 | Code | Arti | Contoh kasus |
 |---|---|---|
-| 200 | OK | GET, PUT, DELETE berhasil, join siswa, upload materi (sync sukses) |
+| 200 | OK | GET, PUT, DELETE berhasil, join siswa, upload materi (sync sukses), update/delete modul |
 | 201 | Created | register guru, buat modul/kelas/siswa/materi, submit jawaban |
 | 202 | Accepted | upload soal (diproses di background) |
-| 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar / bukan PDF, bukan pemilik materi |
+| 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar/bukan PDF, bukan pemilik resource |
 | 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah |
 | 403 | Forbidden | modul/kelas bukan milik user, origin CORS tidak diizinkan |
 | 404 | Not Found | resource tidak ada / bukan milik user yang login |
@@ -736,12 +807,21 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id/soal?jenis=...` tiap ±5 detik sampai muncul data.
 8. **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
 9. Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
-10. 🆕 **Materi punya 2 sumber**: hasil AI (dari upload PDF) dan tulis manual. Keduanya bercampur rapi di `GET /modul/:id/materi`, terurut berdasarkan field `urutan`. FE perlu tombol "Generate dari PDF" dan "Tulis Manual" yang terpisah.
-11. 🆕 **Endpoint CRUD materi pakai path berbeda**: list pakai `/modul/:id/materi` (scoped modul), tapi update/delete pakai `/materi/:id` langsung (karena ID materi sudah unik).
+10. **Materi punya 2 sumber**: hasil AI (dari upload PDF) dan tulis manual. Keduanya bercampur rapi di `GET /modul/:id/materi`, terurut berdasarkan field `urutan`. FE perlu tombol "Generate dari PDF" dan "Tulis Manual" yang terpisah.
+11. **Endpoint CRUD materi pakai path berbeda**: list pakai `/modul/:id/materi` (scoped modul), tapi update/delete pakai `/materi/:id` langsung (karena ID materi sudah unik).
+12. 🆕 **CRUD Modul sekarang LENGKAP**: selain Create & Read, sudah tersedia `PUT /modul/:id` dan `DELETE /modul/:id`. **Hapus modul = hapus semua materi & soal di dalamnya** (cascade). FE sebaiknya menampilkan konfirmasi peringatan sebelum delete.
+13. 🆕 **Response `PUT /modul/:id` tidak menyertakan materi/soal** — hanya info modul itu sendiri. Kalau FE butuh data lengkap, panggil ulang `GET /modul/:id`.
 
 ---
 
 ## Changelog
+
+### 12 September 2026 (update 3)
+- 🆕 **CRUD Modul Lengkap:** tambahkan Update & Delete
+  - `PUT /api/v1/modul/:id` — update nama/deskripsi modul
+  - `DELETE /api/v1/modul/:id` — hapus modul + cascade delete materi & soal
+- ✅ Validasi kepemilikan modul (hanya guru pemilik yang bisa update/delete)
+- ✅ Pesan error ramah untuk kasus bukan pemilik
 
 ### 12 September 2026 (update 2)
 - 🆕 **CRUD Materi Manual:** 4 endpoint baru untuk menulis materi tanpa PDF
@@ -772,4 +852,4 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 - ✅ Optimasi performa: index database, connection pooling, keep-warm Neon
 
 ### 1 September 2026
-- Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.  
+- Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.
