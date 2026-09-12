@@ -22,6 +22,22 @@ func NewMateriHandler(service *service.MateriService) *MateriHandler {
 	return &MateriHandler{service: service}
 }
 
+// ---------- DTO ----------
+
+type createMateriManualRequest struct {
+	Urutan int    `json:"urutan"`
+	Judul  string `json:"judul" binding:"required"`
+	Konten string `json:"konten" binding:"required"`
+}
+
+type updateMateriRequest struct {
+	Judul  string `json:"judul" binding:"required"`
+	Konten string `json:"konten" binding:"required"`
+	Urutan int    `json:"urutan"`
+}
+
+// ---------- UPLOAD PDF (SYNCHRONOUS) ----------
+
 func (h *MateriHandler) UploadMateri(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
@@ -47,8 +63,8 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 		return
 	}
 
-	// --- Validasi file: maks 25MB (PDF materi bisa besar) & wajib .pdf ---
-	const maxSize = 25 * 1024 * 1024 // 25MB
+	// Validasi ukuran (maks 25MB) & ekstensi .pdf
+	const maxSize = 25 * 1024 * 1024
 	if file.Size > maxSize {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Ukuran file terlalu besar. Maksimal 25MB.",
@@ -63,7 +79,6 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 		})
 		return
 	}
-	// --------------------------------------------------------------------
 
 	src, err := file.Open()
 	if err != nil {
@@ -87,12 +102,9 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 	}
 
 	tempFilePath := tempFile.Name()
-	defer os.Remove(tempFilePath) // aman di-defer karena sekarang synchronous
+	defer os.Remove(tempFilePath)
 
-	// ============================================================
-	// SYNCHRONOUS: request DITAHAN sampai AI selesai merangkum.
-	// FE tidak akan pernah menerima pesan "sedang diproses" lagi.
-	// ============================================================
+	// SYNCHRONOUS: request DITAHAN sampai AI selesai merangkum
 	materiList, err := h.service.ProcessAndSaveMateri(uint(modulID), tempFilePath)
 	if err != nil {
 		log.Printf("[materi] gagal memproses materi untuk modul %d: %v", modulID, err)
@@ -118,10 +130,123 @@ func (h *MateriHandler) UploadMateri(c *gin.Context) {
 
 	log.Printf("[materi] berhasil memproses %d materi untuk modul %d", len(materiList), modulID)
 
-	// Hasil rangkuman ASLI langsung dikirim ke FE
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Materi berhasil diproses",
 		"jumlah":  len(materiList),
 		"data":    materiList,
 	})
+}
+
+// ---------- CRUD MANUAL ----------
+
+// GetMateriByModul — GET /api/v1/modul/:id/materi
+func (h *MateriHandler) GetMateriByModul(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	materiList, err := h.service.GetByModulID(uint(modulID), guruID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jumlah": len(materiList),
+		"data":   materiList,
+	})
+}
+
+// CreateMateriManual — POST /api/v1/modul/:id/materi/manual
+func (h *MateriHandler) CreateMateriManual(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	var req createMateriManualRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Judul dan konten materi wajib diisi"})
+		return
+	}
+
+	materi, err := h.service.CreateManual(uint(modulID), guruID, req.Urutan, req.Judul, req.Konten)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Materi berhasil ditambahkan",
+		"data":    materi,
+	})
+}
+
+// UpdateMateri — PUT /api/v1/materi/:id
+func (h *MateriHandler) UpdateMateri(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	materiID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID materi tidak valid"})
+		return
+	}
+
+	var req updateMateriRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Judul dan konten materi wajib diisi"})
+		return
+	}
+
+	materi, err := h.service.Update(uint(materiID), guruID, req.Judul, req.Konten, req.Urutan)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Materi berhasil diperbarui",
+		"data":    materi,
+	})
+}
+
+// DeleteMateri — DELETE /api/v1/materi/:id
+func (h *MateriHandler) DeleteMateri(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	materiID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID materi tidak valid"})
+		return
+	}
+
+	if err := h.service.Delete(uint(materiID), guruID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Materi berhasil dihapus"})
 }

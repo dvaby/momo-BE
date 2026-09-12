@@ -100,6 +100,11 @@ func SetupRouter(
 			guruAuth.DELETE("/kelas/:id/modul/:modul_id", kelasHandler.RemoveModul)
 
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
+			// Materi CRUD (manual)
+			guruAuth.GET("/modul/:id/materi", materiHandler.GetMateriByModul)
+			guruAuth.POST("/modul/:id/materi/manual", materiHandler.CreateMateriManual)
+			guruAuth.PUT("/materi/:id", materiHandler.UpdateMateri)
+			xguruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
 		}
 	}
 
