@@ -10,7 +10,7 @@ Semua contoh request/response di bawah adalah hasil `curl` nyata.
 
 - [Info Umum](#info-umum)
 - [A. Health, Auth & Registrasi](#a-health-auth--registrasi)
-- [B. Modul (Token Guru)](#b-modul-token-guru)
+- [B. Modul & Materi (Token Guru)](#b-modul--materi-token-guru)
 - [C. Kelas (Token Guru)](#c-kelas-token-guru)
 - [D. Alur Siswa (Token Siswa)](#d-alur-siswa-token-siswa)
 - [E. Real-time Updates / SSE (Token Guru)](#e-real-time-updates--sse-token-guru)
@@ -38,7 +38,7 @@ Semua endpoint berada di bawah prefix `/api/v1`, kecuali `/health`.
 | Didapat dari | `POST /api/v1/guru/login` | `POST /api/v1/join` |
 | Isi claim | `guru_id`, `role: "guru"` | `siswa_id`, `kelas_id` |
 | Masa berlaku | 24 jam | 12 jam |
-| Dipakai untuk endpoint | Semua endpoint kelola Guru (Modul, Kelas, dst.) | `GET /modul/:id/soal`, `POST /submit-jawaban` |
+| Dipakai untuk endpoint | Semua endpoint kelola Guru (Modul, Materi, Kelas, dst.) | `GET /modul/:id/soal`, `POST /submit-jawaban` |
 
 Kedua jenis token **tidak bisa dipertukarkan** — token Siswa tidak akan diterima di endpoint khusus Guru, dan sebaliknya.
 
@@ -166,9 +166,9 @@ Publik. Kode kelas selalu **6 digit angka** (contoh: `"487137"`) — sengaja tan
 
 ---
 
-## B. Modul (Token Guru)
+## B. Modul & Materi (Token Guru)
 
-Semua endpoint di bagian ini **terisolasi per Guru** — Guru A tidak bisa melihat/mengakses Modul milik Guru B (akan dapat `404`, bukan error khusus, seolah datanya tidak ada).
+Semua endpoint di bagian ini **terisolasi per Guru** — Guru A tidak bisa melihat/mengakses Modul milik Guru B (akan dapat `404`/`403`, bukan error khusus, seolah datanya tidak ada).
 
 ### `POST /api/v1/modul`
 **Request:**
@@ -202,7 +202,116 @@ List semua Modul **milik guru yang sedang login saja**.
 { "error": "Modul tidak ditemukan" }
 ```
 
-### 🔄 `POST /api/v1/modul/:id/materi` — SYNCHRONOUS (update 12 Sept)
+---
+
+### 🆕 CRUD Materi Manual (12 Sept 2026)
+
+Selain upload PDF (yang dirangkum AI), guru juga bisa menulis materi **manual** langsung di form. Materi manual dan hasil AI **bercampur dalam satu list** dan terurut berdasarkan field `urutan`.
+
+#### `GET /api/v1/modul/:id/materi` — List semua materi di modul
+Mengembalikan semua materi milik modul tersebut, terurut berdasarkan `urutan` ASC.
+
+**Response (200):**
+```json
+{
+  "jumlah": 2,
+  "data": [
+    {
+      "id": 11, "modul_id": 2, "urutan": 1,
+      "judul": "Pengenalan IPA",
+      "konten": "IPA adalah ilmu yang mempelajari...",
+      "created_at": "...", "updated_at": "..."
+    },
+    {
+      "id": 12, "modul_id": 2, "urutan": 2,
+      "judul": "Makhluk Hidup",
+      "konten": "...",
+      "created_at": "...", "updated_at": "..."
+    }
+  ]
+}
+```
+
+**Error — bukan milik guru (403):**
+```json
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+```
+
+#### `POST /api/v1/modul/:id/materi/manual` — Buat materi manual
+**Request:**
+```json
+{
+  "judul": "Pengenalan IPA",
+  "konten": "IPA adalah ilmu yang mempelajari alam sekitar.",
+  "urutan": 5
+}
+```
+`urutan` **opsional** — jika tidak diisi atau ≤ 0, otomatis ditempatkan di posisi terakhir (max urutan + 1).
+
+**Response (201):**
+```json
+{
+  "message": "Materi berhasil ditambahkan",
+  "data": {
+    "id": 149, "modul_id": 3, "urutan": 5,
+    "judul": "Pengenalan IPA",
+    "konten": "IPA adalah ilmu yang mempelajari alam sekitar.",
+    "created_at": "..."
+  }
+}
+```
+
+**Error (400):**
+```json
+{ "error": "Judul dan konten materi wajib diisi" }
+```
+
+#### `PUT /api/v1/materi/:id` — Update materi
+⚠️ Path parameter-nya `id` materi (bukan id modul). Validasi kepemilikan otomatis dilakukan (materi harus milik modul milik guru ini).
+
+**Request:**
+```json
+{
+  "judul": "Pengenalan IPA (Revisi)",
+  "konten": "IPA adalah ilmu tentang alam dan isinya.",
+  "urutan": 5
+}
+```
+
+**Response (200):**
+```json
+{
+  "message": "Materi berhasil diperbarui",
+  "data": {
+    "id": 149, "modul_id": 3, "urutan": 5,
+    "judul": "Pengenalan IPA (Revisi)",
+    "konten": "IPA adalah ilmu tentang alam dan isinya.",
+    "created_at": "...", "updated_at": "..."
+  }
+}
+```
+
+**Error — bukan milik guru (400):**
+```json
+{ "error": "akses ditolak: materi ini bukan milik Anda" }
+```
+
+#### `DELETE /api/v1/materi/:id` — Hapus materi
+Hapus satu materi (manual maupun hasil AI).
+
+**Response (200):**
+```json
+{ "message": "Materi berhasil dihapus" }
+```
+
+**Error — bukan milik guru (400):**
+```json
+{ "error": "akses ditolak: materi ini bukan milik Anda" }
+```
+
+---
+
+### `POST /api/v1/modul/:id/materi` — Upload PDF materi (SYNCHRONOUS)
 
 Upload PDF materi untuk dirangkum AI. **Request DITAHAN oleh backend sampai AI selesai merangkum** (biasanya 10–60 detik tergantung ukuran PDF). FE **wajib** menampilkan spinner/loading selama menunggu.
 
@@ -222,21 +331,14 @@ Content-Type: multipart/form-data
     {
       "id": 11, "modul_id": 2, "urutan": 1,
       "judul": "Pengenalan IPA",
-      "konten": "IPA adalah ilmu yang mempelajari...",
-      "created_at": "...", "updated_at": "..."
-    },
-    {
-      "id": 12, "modul_id": 2, "urutan": 2,
-      "judul": "Makhluk Hidup dan Lingkungan",
-      "konten": "...",
-      "created_at": "...", "updated_at": "..."
+      "konten": "IPA adalah ilmu yang mempelajari..."
     }
   ]
 }
 ```
 ⚠️ **BREAKING CHANGE dari kontrak lama:** endpoint ini TIDAK LAGI mengembalikan pesan "sedang diproses di background". Panel hasil di FE harus merender array **`data`**, bukan `message`.
 
-**Error (422 Unprocessable Entity):**
+**Error (422):**
 ```json
 {
   "error": "Gagal memproses materi dari PDF. Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil.",
@@ -258,11 +360,11 @@ Varian pesan `error` lain yang mungkin:
 { "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
 
-### `POST /api/v1/modul/:id/soal?jenis=uts` — ASYNC (tetap background)
+### `POST /api/v1/modul/:id/soal?jenis=uts` — Upload PDF soal (ASYNC)
 
-Upload PDF soal. `Content-Type: multipart/form-data`, field file **`file`** (wajib `.pdf`, maksimal **5MB**). Query param `jenis` wajib, salah satu: `harian`, `uts`, `uas`.
+Upload PDF soal. Field file **`file`** (wajib `.pdf`, maksimal **5MB**). Query param `jenis` wajib: `harian`, `uts`, `uas`.
 
-⚠️ Berbeda dengan materi, endpoint ini **tetap async**: response langsung kembali, ekstraksi AI berjalan di background.
+Endpoint ini **tetap async**: response langsung kembali, ekstraksi AI berjalan di background.
 
 **Response sukses (202 Accepted):**
 ```json
@@ -285,7 +387,7 @@ FE harus **polling** `GET /modul/:id/soal?jenis=...` (misal tiap 5 detik) sampai
 ```
 
 ### `GET /api/v1/modul/:id/soal?jenis=uts`
-⚠️ Endpoint ini dipakai **Guru maupun Siswa** (Siswa butuh Token Siswa, dan Modul-nya harus sudah di-assign ke Kelas siswa itu — lihat bagian C & D).
+Dipakai **Guru maupun Siswa** (Siswa butuh Token Siswa, dan Modul-nya harus sudah di-assign ke Kelas siswa itu — lihat bagian C & D).
 
 **Response (200):**
 ```json
@@ -325,7 +427,7 @@ Field `mata_pelajaran` **WAJIB** diisi.
 
 📡 Memicu event SSE `kelas-created`.
 
-### 🔄 `GET /api/v1/kelas` — DENGAN PAGINATION (update 12 Sept)
+### `GET /api/v1/kelas` — DENGAN PAGINATION
 List semua kelas milik guru yang sedang login.
 
 **Query parameters (opsional):**
@@ -600,9 +702,9 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 | Code | Arti | Contoh kasus |
 |---|---|---|
 | 200 | OK | GET, PUT, DELETE berhasil, join siswa, upload materi (sync sukses) |
-| 201 | Created | register guru, buat modul/kelas/siswa, submit jawaban |
+| 201 | Created | register guru, buat modul/kelas/siswa/materi, submit jawaban |
 | 202 | Accepted | upload soal (diproses di background) |
-| 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar / bukan PDF |
+| 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar / bukan PDF, bukan pemilik materi |
 | 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah |
 | 403 | Forbidden | modul/kelas bukan milik user, origin CORS tidak diizinkan |
 | 404 | Not Found | resource tidak ada / bukan milik user yang login |
@@ -634,10 +736,21 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id/soal?jenis=...` tiap ±5 detik sampai muncul data.
 8. **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
 9. Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
+10. 🆕 **Materi punya 2 sumber**: hasil AI (dari upload PDF) dan tulis manual. Keduanya bercampur rapi di `GET /modul/:id/materi`, terurut berdasarkan field `urutan`. FE perlu tombol "Generate dari PDF" dan "Tulis Manual" yang terpisah.
+11. 🆕 **Endpoint CRUD materi pakai path berbeda**: list pakai `/modul/:id/materi` (scoped modul), tapi update/delete pakai `/materi/:id` langsung (karena ID materi sudah unik).
 
 ---
 
 ## Changelog
+
+### 12 September 2026 (update 2)
+- 🆕 **CRUD Materi Manual:** 4 endpoint baru untuk menulis materi tanpa PDF
+  - `GET /api/v1/modul/:id/materi` — list semua materi
+  - `POST /api/v1/modul/:id/materi/manual` — buat materi manual
+  - `PUT /api/v1/materi/:id` — update materi
+  - `DELETE /api/v1/materi/:id` — hapus materi
+- ✅ Materi dari AI dan materi manual bercampur rapi, terurut berdasarkan `urutan`
+- ✅ Validasi kepemilikan materi (hanya guru pemilik modul yang bisa CRUD)
 
 ### 12 September 2026
 - 🔄 **BREAKING:** `POST /api/v1/modul/:id/materi` sekarang **SYNCHRONOUS** — response 200 berisi array `data` rangkuman asli (sebelumnya 202 async dengan pesan status)
@@ -645,7 +758,7 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 - ✅ Validasi upload file: materi maks **25MB**, soal maks **5MB**, wajib ekstensi `.pdf` (code `FILE_TOO_LARGE`, `INVALID_FILE_TYPE`)
 - ✅ Pesan error autentikasi lebih ramah + field `code` (`TOKEN_MISSING`, `TOKEN_INVALID_FORMAT`, `TOKEN_INVALID`)
 - ✅ Pesan error validasi register/login lebih manusiawi
-- ✅ Error proses AI materi返回 422 dengan `code: MATERI_PROCESSING_FAILED` dan pesan siap tampil
+- ✅ Error proses AI materi mengembalikan 422 dengan `code: MATERI_PROCESSING_FAILED` dan pesan siap tampil
 - ✅ Timeout AI Service dinaikkan ke 120 detik untuk PDF besar
 
 ### 11 September 2026
@@ -659,4 +772,4 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 - ✅ Optimasi performa: index database, connection pooling, keep-warm Neon
 
 ### 1 September 2026
-- Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.
+- Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.  
