@@ -1,7 +1,7 @@
 # API Reference — Momo-BE
 
 Dokumen ini disusun berdasarkan **testing langsung terhadap kode yang berjalan** (bukan asumsi).
-Versi awal: 1 September 2026 · **Update terakhir: 14 September 2026**.
+Versi awal: 1 September 2026 · **Update terakhir: 14 September 2026 (update 2)**.
 Semua contoh request/response di bawah adalah hasil `curl` nyata terhadap environment production.
 
 ---
@@ -613,12 +613,12 @@ Varian pesan lain: `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, buk
 
 ---
 
-### `POST /api/v1/modul/:id/soal?jenis=uts` — Upload PDF soal (ASYNC)
+### `POST /api/v1/modul/:id/soal?jenis=uts` — Upload PDF soal (SYNCHRONOUS)
 
 - **Auth:** Token Guru
 - **Content-Type:** `multipart/form-data`
 
-Proses ekstraksi AI berjalan di **background**; response langsung kembali.
+🔄 **BREAKING CHANGE (14 Sept 2026):** Endpoint ini sekarang **SYNCHRONOUS** — request ditahan sampai AI selesai mengekstrak soal (biasanya 10–30 detik). FE wajib menampilkan spinner penuh dan **HAPUS semua logic polling**.
 
 **Path parameter:**
 | Param | Tipe | Keterangan |
@@ -642,11 +642,27 @@ curl -X POST "https://momo-be-production.up.railway.app/api/v1/modul/3/soal?jeni
   -F "file=@/home/user/Documents/soal-ipa.pdf"
 ```
 
-**Response (202 Accepted):**
+**Response (200 OK):** hasil ekstraksi asli
 ```json
-{ "message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi", "jenis": "uts" }
+{
+  "message": "Soal berhasil diproses",
+  "jenis": "uts",
+  "jumlah": 6,
+  "data": [
+    {
+      "id": 5, "modul_id": 3, "jenis": "uts",
+      "pertanyaan": "Perhatikan gambar ayunan bandul dibawah ini...",
+      "pilihan_a": "2 sekon dan 0,5 Hz",
+      "pilihan_b": "3 sekon dan 1 Hz",
+      "pilihan_c": "4 sekon dan 2 Hz",
+      "pilihan_d": "5 sekon dan 3 Hz",
+      "created_at": "..."
+    }
+  ]
+}
 ```
-➡️ Setelah ini FE **polling `GET /modul/:id`** tiap ±5 detik sampai array `.soal` dengan `jenis` terkait tidak kosong. **Jangan** polling `GET /modul/:id/soal` (endpoint siswa).
+⚠️ FE langsung render array **`data`** ke panel hasil — tidak perlu fetch ulang atau polling.
+⚠️ Timeout fetch di FE harus **> 120 detik** (atau matikan timeout untuk request ini).
 
 **Error (400):**
 ```json
@@ -660,6 +676,12 @@ curl -X POST "https://momo-be-production.up.railway.app/api/v1/modul/3/soal?jeni
 ```json
 { "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
+
+**Error (422):**
+```json
+{ "error": "Gagal memproses soal dari PDF. Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil.", "code": "SOAL_PROCESSING_FAILED" }
+```
+Varian pesan lain: `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar.` / `...AI tidak menemukan soal pilihan ganda yang valid di PDF ini.`
 
 ---
 
@@ -1140,15 +1162,14 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 
 | Code | Arti | Contoh kasus |
 |---|---|---|
-| 200 | OK | GET, PUT, DELETE berhasil; join siswa; upload materi sync sukses |
+| 200 | OK | GET, PUT, DELETE berhasil; join siswa; upload materi/soal sync sukses |
 | 201 | Created | register, buat modul/kelas/siswa/materi, submit jawaban |
-| 202 | Accepted | upload soal (diproses background) |
 | 302 | Found | redirect verify-email |
 | 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar/bukan PDF, bukan pemilik resource |
 | 401 | Unauthorized | token hilang/salah/kedaluwarsa/wrong role, login gagal, kode kelas salah |
 | 403 | Forbidden | resource bukan milik user, modul belum ditugaskan ke kelas siswa |
 | 404 | Not Found | resource tidak ada / bukan milik user |
-| 422 | Unprocessable Entity | proses AI gagal (materi) |
+| 422 | Unprocessable Entity | proses AI gagal (materi/soal) |
 | 429 | Too Many Requests | rate limit terlampaui |
 | 500 | Internal Server Error | kesalahan tak terduga di server |
 
@@ -1163,6 +1184,7 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 | `FILE_TOO_LARGE` | Upload melebihi batas (materi 25MB / soal 5MB) | Tampilkan batas ukuran |
 | `INVALID_FILE_TYPE` | File bukan `.pdf` | Tampilkan "hanya PDF yang didukung" |
 | `MATERI_PROCESSING_FAILED` | AI gagal merangkum materi | Tampilkan field `error` apa adanya |
+| `SOAL_PROCESSING_FAILED` | AI gagal mengekstrak soal | Tampilkan field `error` apa adanya |
 
 ---
 
@@ -1173,24 +1195,30 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 3. **`judul` vs `nama`** untuk modul: `GET /modul/:id` memakai `judul`, endpoint lain memakai `nama`.
 4. **`kunci_jawaban` tidak pernah dikirim** ke endpoint manapun — keputusan keamanan.
 5. **Object materi tidak punya `updated_at`** — hanya `created_at`.
-6. **Materi SYNCHRONOUS**: `POST /modul/:id/materi` menahan request 10–60 detik; FE wajib spinner + render array `data` (bukan `message`).
-7. **Soal ASYNC**: setelah 202, polling `GET /modul/:id` (bukan `GET /modul/:id/soal`) sampai `.soal` dengan jenis terkait terisi.
-8. **`GET /kelas` berbentuk `{ data, meta }`** karena pagination — baca `response.data`.
-9. **Role isolation aktif**: token guru ≠ endpoint siswa, dan sebaliknya (`TOKEN_WRONG_ROLE`). Halaman guru pakai `GET /modul/:id` untuk preview soal; halaman siswa pakai `GET /modul/:id/soal`.
-10. **Pilihan jawaban diacak backend** per request pada `GET /modul/:id/soal` — FE tidak perlu mengacak lagi.
-11. **`PUT /modul/:id` menimpa deskripsi selalu**: mengirim hanya `nama` akan mengosongkan deskripsi. Kirim keduanya untuk aman.
-12. **Response `PUT /modul/:id` menyertakan preload materi & soal** (payload besar) — jangan render langsung sebagai list, ambil field yang diperlukan saja.
-13. **Materi dua sumber** (AI & manual) bercampur di `GET /modul/:id/materi`, terurut `urutan` ASC.
-14. **Path CRUD materi berbeda**: list scoped modul (`/modul/:id/materi`), update/delete scoped materi (`/materi/:id`).
-15. **Delete modul = cascade**: semua materi & soal di dalamnya ikut terhapus — FE wajib konfirmasi ganda.
-16. **Submit jawaban `uts`/`uas` sekali per siswa per soal**; `harian` boleh berulang.
-17. **Registrasi guru memicu email verifikasi**; link memanggil `GET /guru/verify-email` yang me-redirect ke FE dengan `?status=success|error`.
-18. **SSE heartbeat** (`: heartbeat`) adalah komentar — parser FE wajib mengabaikannya.
-19. **`/test-extract-pdf` hanya untuk debug** — jangan dipakai di alur produksi.
+6. **Materi & Soal keduanya SYNCHRONOUS** (14 Sept): request ditahan 10–60 detik sampai AI selesai; FE wajib spinner + render array `data` (bukan `message`). **HAPUS semua logic polling untuk upload soal.**
+7. **`GET /kelas` berbentuk `{ data, meta }`** karena pagination — baca `response.data`.
+8. **Role isolation aktif**: token guru ≠ endpoint siswa, dan sebaliknya (`TOKEN_WRONG_ROLE`). Halaman guru pakai `GET /modul/:id` untuk preview soal; halaman siswa pakai `GET /modul/:id/soal`.
+9. **Pilihan jawaban diacak backend** per request pada `GET /modul/:id/soal` — FE tidak perlu mengacak lagi.
+10. **`PUT /modul/:id` menimpa deskripsi selalu**: mengirim hanya `nama` akan mengosongkan deskripsi. Kirim keduanya untuk aman.
+11. **Response `PUT /modul/:id` menyertakan preload materi & soal** (payload besar) — jangan render langsung sebagai list, ambil field yang diperlukan saja.
+12. **Materi dua sumber** (AI & manual) bercampur di `GET /modul/:id/materi`, terurut `urutan` ASC.
+13. **Path CRUD materi berbeda**: list scoped modul (`/modul/:id/materi`), update/delete scoped materi (`/materi/:id`).
+14. **Delete modul = cascade**: semua materi & soal di dalamnya ikut terhapus — FE wajib konfirmasi ganda.
+15. **Submit jawaban `uts`/`uas` sekali per siswa per soal**; `harian` boleh berulang.
+16. **Registrasi guru memicu email verifikasi**; link memanggil `GET /guru/verify-email` yang me-redirect ke FE dengan `?status=success|error`.
+17. **SSE heartbeat** (`: heartbeat`) adalah komentar — parser FE wajib mengabaikannya.
+18. **`/test-extract-pdf` hanya untuk debug** — jangan dipakai di alur produksi.
+19. **Timeout fetch untuk upload soal/materi**: set > 120 detik atau matikan timeout, karena proses AI bisa memakan waktu 30–60 detik untuk PDF besar.
 
 ---
 
 ## Changelog
+
+### 14 September 2026 (update 2)
+- 🔄 **BREAKING:** `POST /modul/:id/soal` sekarang **SYNCHRONOUS** — request ditahan sampai AI selesai (10–30 detik), response `200` berisi array `data` soal asli
+- ✅ FE tidak perlu lagi polling setelah upload soal — langsung render hasil dari response
+- ✅ Error code baru: `SOAL_PROCESSING_FAILED` untuk kegagalan ekstraksi soal
+- ✅ Validasi pipeline soal sync: 2 soal UAS berhasil diekstrak dalam 16.9 detik
 
 ### 14 September 2026
 - 🔒 **Role isolation aktif** di middleware: token guru di endpoint siswa (dan sebaliknya) → `401 TOKEN_WRONG_ROLE`
