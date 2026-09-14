@@ -187,3 +187,160 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 		"data":   responseData,
 	})
 }
+
+// --- DTO untuk CRUD Soal Manual ---
+
+type createSoalManualRequest struct {
+	Jenis        string `json:"jenis" binding:"required"`
+	Pertanyaan   string `json:"pertanyaan" binding:"required"`
+	PilihanA     string `json:"pilihan_a" binding:"required"`
+	PilihanB     string `json:"pilihan_b" binding:"required"`
+	PilihanC     string `json:"pilihan_c" binding:"required"`
+	PilihanD     string `json:"pilihan_d" binding:"required"`
+	KunciJawaban string `json:"kunci_jawaban" binding:"required"`
+}
+
+type updateSoalRequest struct {
+	Jenis        string `json:"jenis"`
+	Pertanyaan   string `json:"pertanyaan" binding:"required"`
+	PilihanA     string `json:"pilihan_a" binding:"required"`
+	PilihanB     string `json:"pilihan_b" binding:"required"`
+	PilihanC     string `json:"pilihan_c" binding:"required"`
+	PilihanD     string `json:"pilihan_d" binding:"required"`
+	KunciJawaban string `json:"kunci_jawaban" binding:"required"`
+}
+
+// GetSoalByModulForGuru — GET /api/v1/modul/:id/soal/list
+// Endpoint khusus GURU untuk melihat soal dengan filter jenis (kunci_jawaban tetap disembunyikan)
+func (h *SoalHandler) GetSoalByModulForGuru(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	jenisParam := c.Query("jenis")
+	jenis := model.JenisSoal(jenisParam)
+	if jenisParam != "" && jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		return
+	}
+
+	soalList, err := h.service.GetByModulIDAndJenis(uint(modulID), guruID, jenis)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	responseData := make([]SoalResponse, 0, len(soalList))
+	for _, soal := range soalList {
+		responseData = append(responseData, ToSoalResponse(soal))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jenis":  jenisParam,
+		"jumlah": len(responseData),
+		"data":   responseData,
+	})
+}
+
+// CreateSoalManual — POST /api/v1/modul/:id/soal/manual
+func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	var req createSoalManualRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (jenis, pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
+		return
+	}
+
+	soal, err := h.service.CreateManual(
+		uint(modulID), guruID,
+		model.JenisSoal(req.Jenis),
+		req.Pertanyaan, req.PilihanA, req.PilihanB, req.PilihanC, req.PilihanD,
+		req.KunciJawaban,
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Soal berhasil ditambahkan",
+		"data":    ToSoalResponse(*soal),
+	})
+}
+
+// UpdateSoal — PUT /api/v1/soal/:id
+func (h *SoalHandler) UpdateSoal(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	soalID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID soal tidak valid"})
+		return
+	}
+
+	var req updateSoalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
+		return
+	}
+
+	soal, err := h.service.Update(
+		uint(soalID), guruID,
+		req.Pertanyaan, req.PilihanA, req.PilihanB, req.PilihanC, req.PilihanD,
+		req.KunciJawaban, model.JenisSoal(req.Jenis),
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Soal berhasil diperbarui",
+		"data":    ToSoalResponse(*soal),
+	})
+}
+
+// DeleteSoal — DELETE /api/v1/soal/:id
+func (h *SoalHandler) DeleteSoal(c *gin.Context) {
+	guruID, ok := getUintFromContext(c, "guru_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	soalID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID soal tidak valid"})
+		return
+	}
+
+	if err := h.service.Delete(uint(soalID), guruID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Soal berhasil dihapus"})
+}

@@ -107,6 +107,11 @@ func SetupRouter(
 			guruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
 			guruAuth.PUT("/modul/:id", modulHandler.UpdateModul)
 			guruAuth.DELETE("/modul/:id", modulHandler.DeleteModul)
+			// Soal CRUD (manual)
+			guruAuth.GET("/modul/:id/soal/list", soalHandler.GetSoalByModulForGuru)
+			guruAuth.POST("/modul/:id/soal/manual", soalHandler.CreateSoalManual)
+			guruAuth.PUT("/soal/:id", soalHandler.UpdateSoal)
+			guruAuth.DELETE("/soal/:id", soalHandler.DeleteSoal)
 		}
 	}
 
