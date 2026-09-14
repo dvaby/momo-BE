@@ -2,18 +2,19 @@
 
 Dokumen ini disusun berdasarkan **testing langsung terhadap kode yang berjalan** (bukan asumsi).
 Versi awal: 1 September 2026 · **Update terakhir: 14 September 2026**.
-Semua contoh request/response di bawah adalah hasil `curl` nyata.
+Semua contoh request/response di bawah adalah hasil `curl` nyata terhadap environment production.
 
 ---
 
 ## Daftar Isi
 
 - [Info Umum](#info-umum)
-- [A. Health, Auth & Registrasi](#a-health-auth--registrasi)
-- [B. Modul & Materi (Token Guru)](#b-modul--materi-token-guru)
-- [C. Kelas (Token Guru)](#c-kelas-token-guru)
+- [A. Health, Auth & Verifikasi](#a-health-auth--verifikasi)
+- [B. Modul, Materi & Soal](#b-modul-materi--soal)
+- [C. Kelas & Nilai (Token Guru)](#c-kelas--nilai-token-guru)
 - [D. Alur Siswa (Token Siswa)](#d-alur-siswa-token-siswa)
 - [E. Real-time Updates / SSE (Token Guru)](#e-real-time-updates--sse-token-guru)
+- [F. Lampiran: Endpoint Debug](#f-lampiran-endpoint-debug)
 - [Error Handling](#error-handling)
 - [Known Issues / Catatan untuk FE](#known-issues--catatan-untuk-fe)
 - [Changelog](#changelog)
@@ -26,32 +27,32 @@ Semua contoh request/response di bawah adalah hasil `curl` nyata.
 |---|---|
 | **Base URL (dev)** | `http://localhost:8080` |
 | **Base URL (production)** | `https://momo-be-production.up.railway.app` |
-| **Format data** | JSON (`application/json`) untuk sebagian besar endpoint; `multipart/form-data` untuk upload file PDF |
-| **Autentikasi** | JWT via header `Authorization: Bearer <token>` — ada 2 jenis token berbeda, lihat di bawah |
+| **Prefix endpoint** | `/api/v1` (kecuali `/health`) |
+| **Format data** | `application/json` untuk sebagian besar endpoint; `multipart/form-data` untuk upload PDF |
+| **Autentikasi** | JWT via header `Authorization: Bearer <token>` |
 
-Semua endpoint berada di bawah prefix `/api/v1`, kecuali `/health`.
-
-### ⚠️ PENTING: Dua Jenis Token JWT (Role Isolation)
+### 🔒 Dua Jenis Token JWT & Role Isolation
 
 | | Token Guru | Token Siswa |
 |---|---|---|
 | Didapat dari | `POST /api/v1/guru/login` | `POST /api/v1/join` |
 | Isi claim | `guru_id`, `role: "guru"` | `siswa_id`, `kelas_id` |
 | Masa berlaku | 24 jam | 12 jam |
-| Dipakai untuk endpoint | **Semua endpoint Guru** (Modul, Materi, Kelas, SSE) | **Hanya endpoint Siswa** (`GET /modul/:id/soal`, `POST /submit-jawaban`) |
+| Lokasi di response | `data.token` | `token` (root object) |
+| Berlaku di | Semua endpoint Guru | Hanya `GET /modul/:id/soal` dan `POST /submit-jawaban` |
 
-**🔒 ROLE ISOLATION AKTIF (14 Sept 2026):**
-- Token Guru **TIDAK BISA** dipakai di endpoint khusus Siswa → error `TOKEN_WRONG_ROLE`
-- Token Siswa **TIDAK BISA** dipakai di endpoint khusus Guru → error `TOKEN_WRONG_ROLE`
-- FE harus pastikan **jenis token sesuai dengan halaman yang sedang dibuka**
+**Role isolation aktif (14 Sept 2026):**
+- Token Guru dipakai di endpoint siswa → `401` dengan `code: TOKEN_WRONG_ROLE`
+- Token Siswa dipakai di endpoint guru → `401` dengan `code: TOKEN_WRONG_ROLE`
+- FE wajib memastikan jenis token sesuai halaman yang sedang dibuka.
 
 ### CORS
 
-Origin berikut sudah diizinkan mengakses API ini dari browser:
-- `http://localhost:3000`, `http://localhost:5173` (dev; bisa ditambah lewat env `CORS_ALLOWED_ORIGINS` di sisi BE)
-- Semua subdomain `*.vercel.app` (production maupun preview deployment)
+Origin yang diizinkan:
+- `http://localhost:3000`, `http://localhost:5173` (dev; dapat ditambah via env `CORS_ALLOWED_ORIGINS`)
+- Semua subdomain `*.vercel.app` (production & preview)
 
-Origin lain akan mendapat `403 Forbidden`. Request tanpa header `Origin` (misal panggilan server-to-server dari AI Service) **tidak terpengaruh** aturan CORS sama sekali.
+Origin lain → `403 Forbidden`. Request tanpa header `Origin` (server-to-server, misal dari AI Service) tidak terpengaruh CORS.
 
 ### Rate Limiting
 
@@ -60,453 +61,638 @@ Origin lain akan mendapat `403 Forbidden`. Request tanpa header `Origin` (misal 
 | Auth limiter | 5 request / 12 detik per IP | `POST /guru/register`, `POST /guru/login`, `POST /join` |
 | AI limiter | 3 request / 6 detik per IP | `POST /test-extract-pdf`, `POST /submit-jawaban` |
 
-Melebihi batas akan mendapat **`429 Too Many Requests`**:
+Melebihi batas → `429 Too Many Requests`:
 ```json
 { "error": "Terlalu banyak permintaan. Silakan coba lagi dalam beberapa saat." }
 ```
-Tangani di FE dengan pesan "terlalu banyak percobaan, coba lagi nanti".
 
 ### Format Error Umum
 
-Kebanyakan error dikembalikan sebagai:
 ```json
 { "error": "pesan error dalam bahasa Indonesia" }
 ```
-Beberapa error menyertakan field `code` untuk memudahkan FE menangani kasus spesifik (lihat bagian [Error Handling](#error-handling)).
+Sebagian error menyertakan field `code` untuk penanganan spesifik di FE — lihat [Error Handling](#error-handling).
+
+### Cara Membaca Blok Endpoint
+
+Setiap endpoint didokumentasikan dengan urutan konsisten:
+**Auth → Content-Type → Rate limit → Path/Query parameter → Body → contoh curl → Response → Error.**
 
 ---
 
-## A. Health, Auth & Registrasi
+## A. Health, Auth & Verifikasi
 
-### `GET /health`
-Publik. Cek server hidup.
+### `GET /health` — Cek server hidup
 
-**Response 200:**
+- **Auth:** Publik
+
+**Response (200):**
 ```json
 { "status": "ok", "message": "server is running!" }
 ```
 
-### `POST /api/v1/guru/register`
-Publik.
+---
 
-**Request:**
+### `POST /api/v1/guru/register` — Registrasi guru
+
+- **Auth:** Publik
+- **Content-Type:** `application/json`
+- **Rate limit:** Auth limiter
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `nama` | string | ✅ | Minimal 2 karakter |
+| `email` | string | ✅ | Format email valid |
+| `password` | string | ✅ | Minimal 6 karakter |
+
 ```json
 { "nama": "Bu Sari", "email": "sari@sekolah.com", "password": "rahasia123" }
 ```
 
-**Response sukses (201 Created):**
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/guru/register \
+  -H "Content-Type: application/json" \
+  -d '{"nama":"Bu Sari","email":"sari@sekolah.com","password":"rahasia123"}'
+```
+
+**Response (201):**
 ```json
 {
+  "message": "pendaftaran berhasil, silakan cek email kamu untuk verifikasi akun",
   "data": {
     "id": 3, "nama": "Bu Sari", "email": "sari@sekolah.com",
-    "created_at": "2026-09-01T01:15:58Z", "updated_at": "2026-09-01T01:15:58Z"
-  },
-  "message": "pendaftaran guru berhasil"
+    "created_at": "...", "updated_at": "..."
+  }
 }
 ```
+📧 Registrasi memicu email verifikasi berisi link ke `GET /api/v1/guru/verify-email`.
 
-**Error — email sudah terdaftar (400):**
+**Error (400):**
 ```json
 { "error": "email sudah terdaftar" }
-```
-
-**Error — validasi field (400):** pesan sudah ramah, contoh:
-```json
 { "error": "Nama wajib diisi (minimal 2 karakter)" }
 { "error": "Format email tidak valid" }
 { "error": "Password minimal 6 karakter" }
 ```
 
-### `POST /api/v1/guru/login`
-Publik.
+---
 
-**Request:**
+### `GET /api/v1/guru/verify-email` — Verifikasi email guru
+
+- **Auth:** Publik (dipanggil dari link di email, biasanya oleh browser)
+
+**Query parameter:**
+| Param | Wajib | Keterangan |
+|---|---|---|
+| `token` | ✅ | Token verifikasi sekali pakai dari email |
+
+**Perilaku:** endpoint ini **tidak mengembalikan JSON**, melainkan **redirect (302)** ke URL frontend:
+- Sukses → `{FE_VERIFY_REDIRECT_URL}?status=success`
+- Gagal → `{FE_VERIFY_REDIRECT_URL}?status=error&message=<pesan>`
+
+FE cukup menampilkan halaman tujuan berdasarkan query `status`.
+
+**curl:**
+```bash
+curl -i "https://momo-be-production.up.railway.app/api/v1/guru/verify-email?token=xxx"
+# -> HTTP/1.1 302 Found, Location: http://localhost:3000/email-verified?status=success
+```
+
+---
+
+### `POST /api/v1/guru/login` — Login guru
+
+- **Auth:** Publik
+- **Content-Type:** `application/json`
+- **Rate limit:** Auth limiter
+
+**Body:**
+| Field | Tipe | Wajib |
+|---|---|---|
+| `email` | string | ✅ |
+| `password` | string | ✅ |
+
 ```json
 { "email": "sari@sekolah.com", "password": "rahasia123" }
 ```
 
-**Response sukses (200):**
-```json
-{
-  "data": {
-    "token": "eyJhbGci...",
-    "guru": { "id": 3, "nama": "Bu Sari", "email": "sari@sekolah.com", "created_at": "...", "updated_at": "..." }
-  },
-  "message": "login berhasil"
-}
-```
-⚠️ **Token ada di `data.token`, BUKAN di root object.**
-
-**Error — email/password salah (401):**
-```json
-{ "error": "email atau password salah" }
-```
-
-### `POST /api/v1/join` (Siswa masuk Kelas)
-Publik. Kode kelas selalu **6 digit angka** (contoh: `"487137"`) — sengaja tanpa huruf untuk kemudahan pengucapan lewat voice/STT.
-
-**Request:**
-```json
-{ "kode_kelas": "487137", "nama": "Siswa Retest" }
-```
-
-**Response sukses (200):**
-```json
-{ "siswa_id": 1, "kelas_id": 3, "nama": "Siswa Retest", "token": "eyJhbGci..." }
-```
-⚠️ **Beda dengan login Guru — token di sini langsung di root object (`.token`), bukan `.data.token`.**
-
-**Error — kode tidak ditemukan (401):**
-```json
-{ "error": "kelas dengan kode '000000' tidak ditemukan" }
-```
-
-**Error — nama tidak terdaftar di kelas itu (401):**
-```json
-{ "error": "nama 'Nama Asing' tidak terdaftar di kelas ini" }
-```
-*(Catatan: siswa harus DIDAFTARKAN GURU dulu lewat `POST /kelas/:id/siswa` sebelum bisa join — siswa tidak bisa daftar sendiri.)*
-
----
-
-## B. Modul & Materi (Token Guru)
-
-Semua endpoint di bagian ini **terisolasi per Guru** — Guru A tidak bisa melihat/mengakses Modul milik Guru B (akan dapat `404`/`403`, bukan error khusus, seolah datanya tidak ada).
-
-### 📦 Struktur Data: Modul vs Materi vs Soal
-
-```
-GURU (pemilik)
- └── MODUL  ← "wadah/unit belajar" (contoh: "Ipa")
-      ├── MATERI  ← ISI belajar (bab/rangkuman)
-      ├── SOAL    ← BANK SOAL (harian/uts/uas)
-      └── tertaut ke KELAS (many2many)
-```
-
-| | **MODUL** | **MATERI** |
-|---|---|---|
-| Level | Wadah/unit | Isi/bab |
-| Field utama | `nama`, `deskripsi` | `judul`, `konten`, `urutan` |
-| Kepunyaan | Langsung milik Guru | Milik Modul (ikut guru pemilik modul) |
-| Cascade | Hapus modul = hapus semua materi & soal di dalamnya | Hapus materi = modul tidak terpengaruh |
-
----
-
-### `POST /api/v1/modul` — Buat modul baru
-**Request:**
-```json
-{ "nama": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5" }
-```
-**Response (201):**
-```json
-{
-  "id": 2, "guru_id": 3, "nama": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
-  "created_at": "...", "updated_at": "..."
-}
-```
-
-### `GET /api/v1/modul`
-List semua Modul **milik guru yang sedang login saja**.
-**Response (200):** array objek Modul seperti di atas.
-
-### `GET /api/v1/modul/:id` — Detail modul (termasuk soal & materi)
-**Response sukses (200):**
-```json
-{
-  "id": 2, "judul": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
-  "materi": [
-    { "id": 1, "modul_id": 2, "urutan": 1, "judul": "...", "konten": "...", "created_at": "..." }
-  ],
-  "soal": [
-    { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...", "created_at": "..." }
-  ]
-}
-```
-⚠️ Perhatikan field **`judul`** di response detail ini (beda dari `nama` yang dipakai di request/list). `kunci_jawaban` **sengaja tidak pernah muncul** di endpoint ini, termasuk untuk Guru pemilik soal.
-
-**Error — tidak ditemukan / bukan milik guru ini (404):**
-```json
-{ "error": "Modul tidak ditemukan" }
-```
-
-### 🆕 `PUT /api/v1/modul/:id` — Update modul (12 Sept 2026)
-
-Update nama dan/atau deskripsi modul. **Minimal salah satu field harus diisi.**
-
-**Request:** (kirim hanya field yang ingin diubah, atau keduanya)
-```json
-{
-  "nama": "Ipa (Updated)",
-  "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5"
-}
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/guru/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"sari@sekolah.com","password":"rahasia123"}'
 ```
 
 **Response (200):**
 ```json
 {
-  "message": "Modul berhasil diperbarui",
+  "message": "login berhasil",
   "data": {
-    "id": 3, "guru_id": 7, "nama": "Ipa (Updated)",
-    "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
-    "created_at": "...", "updated_at": "..."
+    "token": "eyJhbGci...",
+    "guru": { "id": 3, "nama": "Bu Sari", "email": "sari@sekolah.com", "created_at": "...", "updated_at": "..." }
   }
 }
 ```
-⚠️ Response **TIDAK** menyertakan `materi` atau `soal` secara default. Gunakan `GET /modul/:id` untuk melihat konten lengkapnya.
+⚠️ Token berada di **`data.token`**, bukan di root object.
 
-**Error — bukan pemilik (400):**
+**Error (401):**
 ```json
+{ "error": "email atau password salah" }
+```
+
+---
+
+### `POST /api/v1/join` — Siswa masuk kelas
+
+- **Auth:** Publik
+- **Content-Type:** `application/json`
+- **Rate limit:** Auth limiter
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `kode_kelas` | string | ✅ | 6 digit angka, diberikan guru |
+| `nama` | string | ✅ | Harus sudah didaftarkan guru di kelas tersebut |
+
+```json
+{ "kode_kelas": "487137", "nama": "Siswa Retest" }
+```
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/join \
+  -H "Content-Type: application/json" \
+  -d '{"kode_kelas":"487137","nama":"Siswa Retest"}'
+```
+
+**Response (200):**
+```json
+{ "siswa_id": 1, "kelas_id": 3, "nama": "Siswa Retest", "token": "eyJhbGci..." }
+```
+⚠️ Token berada **langsung di root object (`.token`)** — berbeda dari login guru.
+
+**Error (401):**
+```json
+{ "error": "kelas dengan kode '000000' tidak ditemukan" }
+{ "error": "nama 'Nama Asing' tidak terdaftar di kelas ini" }
+```
+
+---
+
+## B. Modul, Materi & Soal
+
+> Semua endpoint di bagian ini bertoken **Guru**, kecuali `GET /modul/:id/soal` yang bertoken **Siswa** (ditandai jelas).
+> Data terisolasi per guru: guru lain mengakses modul Anda → `404`/`403`, seolah tidak ada.
+
+### Struktur data
+
+```
+GURU (pemilik)
+ └── MODUL   ← wadah/unit belajar (nama, deskripsi)
+      ├── MATERI ← isi belajar (judul, konten, urutan)
+      ├── SOAL   ← bank soal (pertanyaan, pilihan a-d, jenis)
+      └── tertaut ke KELAS (many2many) ← pintu akses siswa
+```
+
+Object **Modul** (list/create):
+```json
+{ "id": 2, "guru_id": 3, "nama": "Modul IPA", "deskripsi": "...", "created_at": "...", "updated_at": "..." }
+```
+Object **Materi**:
+```json
+{ "id": 11, "modul_id": 2, "urutan": 1, "judul": "...", "konten": "...", "created_at": "..." }
+```
+⚠️ Object materi **tidak memiliki field `updated_at`**.
+Object **Soal**:
+```json
+{ "id": 5, "modul_id": 3, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...", "created_at": "..." }
+```
+⚠️ `kunci_jawaban` **tidak pernah** muncul di response manapun.
+
+---
+
+### `POST /api/v1/modul` — Buat modul baru
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:**
+| Field | Tipe | Wajib |
+|---|---|---|
+| `nama` | string | ✅ |
+| `deskripsi` | string | ❌ |
+
+```json
+{ "nama": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5" }
+```
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/modul \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Modul IPA","deskripsi":"Ilmu Pengetahuan Alam untuk Kelas 5"}'
+```
+
+**Response (201):** object modul mentah
+```json
+{ "id": 2, "guru_id": 3, "nama": "Modul IPA", "deskripsi": "...", "created_at": "...", "updated_at": "...", "materi": null, "soal": null }
+```
+
+**Error (400):** pesan validator mentah jika `nama` kosong
+```json
+{ "error": "Key: 'createModulRequest.Nama' Error:Field validation for 'Nama' failed on the 'required' tag" }
+```
+
+---
+
+### `GET /api/v1/modul` — List modul milik guru
+
+- **Auth:** Token Guru
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  https://momo-be-production.up.railway.app/api/v1/modul
+```
+
+**Response (200):** array object modul (hanya milik guru yang login)
+```json
+[ { "id": 3, "guru_id": 7, "nama": "Ipa", "deskripsi": "...", "created_at": "...", "updated_at": "...", "materi": null, "soal": null } ]
+```
+
+---
+
+### `GET /api/v1/modul/:id` — Detail modul (termasuk materi & soal)
+
+- **Auth:** Token Guru
+
+**Path parameter:**
+| Param | Tipe | Keterangan |
+|---|---|---|
+| `id` | number | ID modul |
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  https://momo-be-production.up.railway.app/api/v1/modul/3
+```
+
+**Response (200):**
+```json
+{
+  "id": 3,
+  "judul": "Ipa (Updated)",
+  "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
+  "materi": [ { "id": 73, "modul_id": 3, "urutan": 1, "judul": "...", "konten": "...", "created_at": "..." } ],
+  "soal": [ { "id": 5, "modul_id": 3, "jenis": "harian", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...", "created_at": "..." } ]
+}
+```
+⚠️ Field nama modul di sini bernama **`judul`** (bukan `nama`).
+✅ **Endpoint inilah yang dipakai halaman GURU** untuk preview/polling soal & materi — bukan `GET /modul/:id/soal`.
+
+**Error (404):**
+```json
+{ "error": "Modul tidak ditemukan" }
+```
+
+---
+
+### `PUT /api/v1/modul/:id` — Update modul
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Path parameter:** `id` = ID modul.
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `nama` | string | ❌* | *Minimal `nama` atau `deskripsi` harus diisi |
+| `deskripsi` | string | ❌* | ⚠️ Nilai yang dikirim **selalu menimpa** deskripsi lama |
+
+```json
+{ "nama": "Ipa (Updated)", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5" }
+```
+
+**curl:**
+```bash
+curl -X PUT https://momo-be-production.up.railway.app/api/v1/modul/3 \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Ipa (Updated)","deskripsi":"Ilmu Pengetahuan Alam untuk Kelas 5"}'
+```
+
+**Response (200):** `data` berisi object modul lengkap **termasuk preload materi & soal** (payload besar)
+```json
+{
+  "message": "Modul berhasil diperbarui",
+  "data": { "id": 3, "guru_id": 7, "nama": "Ipa (Updated)", "deskripsi": "...", "created_at": "...", "updated_at": "...", "materi": [ ... ], "soal": [ ... ] }
+}
+```
+
+**Error (400):**
+```json
+{ "error": "Minimal salah satu field (nama atau deskripsi) harus diisi" }
 { "error": "modul tidak ditemukan atau bukan milik Anda" }
 ```
 
-**Error — field kosong (400):**
-```json
-{ "error": "Minimal salah satu field (nama atau deskripsi) harus diisi" }
+---
+
+### `DELETE /api/v1/modul/:id` — Hapus modul (cascade)
+
+- **Auth:** Token Guru
+
+⚠️ Menghapus **seluruh materi & soal** di dalam modul + melepas tautan ke kelas. Tidak bisa dibatalkan.
+
+**curl:**
+```bash
+curl -X DELETE https://momo-be-production.up.railway.app/api/v1/modul/3 \
+  -H "Authorization: Bearer $TOKEN_GURU"
 ```
-
-### 🆕 `DELETE /api/v1/modul/:id` — Hapus modul (12 Sept 2026)
-
-Hapus modul beserta **semua materi dan soal** di dalamnya (cascade delete).
-
-⚠️ **PERINGATAN:** Operasi ini tidak bisa dibatalkan. Semua materi (hasil AI maupun manual) dan soal (harian/uts/uas) akan ikut terhapus. Tautan modul dengan kelas juga akan terlepas.
 
 **Response (200):**
 ```json
 { "message": "Modul berhasil dihapus beserta semua materi dan soal di dalamnya" }
 ```
 
-**Error — bukan pemilik (400):**
+**Error (400):**
 ```json
 { "error": "modul tidak ditemukan atau bukan milik Anda" }
 ```
 
 ---
 
-### CRUD Materi Manual (12 Sept 2026)
+### `GET /api/v1/modul/:id/materi` — List materi dalam modul
 
-Selain upload PDF (yang dirangkum AI), guru juga bisa menulis materi **manual** langsung di form. Materi manual dan hasil AI **bercampur dalam satu list** dan terurut berdasarkan field `urutan`.
+- **Auth:** Token Guru
 
-#### `GET /api/v1/modul/:id/materi` — List semua materi di modul
-Mengembalikan semua materi milik modul tersebut, terurut berdasarkan `urutan` ASC.
+**Path parameter:** `id` = ID modul.
 
-**Response (200):**
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  https://momo-be-production.up.railway.app/api/v1/modul/3/materi
+```
+
+**Response (200):** terurut `urutan` ASC
 ```json
 {
   "jumlah": 2,
   "data": [
-    {
-      "id": 11, "modul_id": 2, "urutan": 1,
-      "judul": "Pengenalan IPA",
-      "konten": "IPA adalah ilmu yang mempelajari...",
-      "created_at": "...", "updated_at": "..."
-    },
-    {
-      "id": 12, "modul_id": 2, "urutan": 2,
-      "judul": "Makhluk Hidup",
-      "konten": "...",
-      "created_at": "...", "updated_at": "..."
-    }
+    { "id": 11, "modul_id": 3, "urutan": 1, "judul": "...", "konten": "...", "created_at": "..." },
+    { "id": 12, "modul_id": 3, "urutan": 2, "judul": "...", "konten": "...", "created_at": "..." }
   ]
 }
 ```
 
-**Error — bukan milik guru (403):**
+**Error (403):**
 ```json
 { "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
 
-#### `POST /api/v1/modul/:id/materi/manual` — Buat materi manual
-**Request:**
+---
+
+### `POST /api/v1/modul/:id/materi/manual` — Buat materi manual
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `judul` | string | ✅ | |
+| `konten` | string | ✅ | |
+| `urutan` | number | ❌ | Jika kosong/≤0 → otomatis posisi terakhir |
+
 ```json
-{
-  "judul": "Pengenalan IPA",
-  "konten": "IPA adalah ilmu yang mempelajari alam sekitar.",
-  "urutan": 5
-}
+{ "judul": "Pengenalan IPA", "konten": "IPA adalah ilmu yang mempelajari alam sekitar.", "urutan": 5 }
 ```
-`urutan` **opsional** — jika tidak diisi atau ≤ 0, otomatis ditempatkan di posisi terakhir (max urutan + 1).
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/modul/3/materi/manual \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"judul":"Pengenalan IPA","konten":"IPA adalah ilmu yang mempelajari alam sekitar."}'
+```
 
 **Response (201):**
 ```json
 {
   "message": "Materi berhasil ditambahkan",
-  "data": {
-    "id": 149, "modul_id": 3, "urutan": 5,
-    "judul": "Pengenalan IPA",
-    "konten": "IPA adalah ilmu yang mempelajari alam sekitar.",
-    "created_at": "..."
-  }
+  "data": { "id": 149, "modul_id": 3, "urutan": 5, "judul": "Pengenalan IPA", "konten": "...", "created_at": "..." }
 }
 ```
 
-**Error (400):**
+**Error (400 / 403):**
 ```json
 { "error": "Judul dan konten materi wajib diisi" }
+{ "error": "judul dan konten materi wajib diisi" }
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
 
-#### `PUT /api/v1/materi/:id` — Update materi
-⚠️ Path parameter-nya `id` materi (bukan id modul). Validasi kepemilikan otomatis dilakukan (materi harus milik modul milik guru ini).
+---
 
-**Request:**
+### `PUT /api/v1/materi/:id` — Update materi
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+⚠️ Path parameter adalah **ID materi**, bukan ID modul.
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `judul` | string | ✅ | |
+| `konten` | string | ✅ | |
+| `urutan` | number | ❌ | Jika >0 akan diubah |
+
 ```json
-{
-  "judul": "Pengenalan IPA (Revisi)",
-  "konten": "IPA adalah ilmu tentang alam dan isinya.",
-  "urutan": 5
-}
+{ "judul": "Pengenalan IPA (Revisi)", "konten": "IPA adalah ilmu tentang alam dan isinya.", "urutan": 5 }
+```
+
+**curl:**
+```bash
+curl -X PUT https://momo-be-production.up.railway.app/api/v1/materi/149 \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"judul":"Pengenalan IPA (Revisi)","konten":"IPA adalah ilmu tentang alam dan isinya."}'
 ```
 
 **Response (200):**
 ```json
 {
   "message": "Materi berhasil diperbarui",
-  "data": {
-    "id": 149, "modul_id": 3, "urutan": 5,
-    "judul": "Pengenalan IPA (Revisi)",
-    "konten": "IPA adalah ilmu tentang alam dan isinya.",
-    "created_at": "...", "updated_at": "..."
-  }
+  "data": { "id": 149, "modul_id": 3, "urutan": 5, "judul": "Pengenalan IPA (Revisi)", "konten": "...", "created_at": "..." }
 }
 ```
 
-**Error — bukan milik guru (400):**
+**Error (400):**
 ```json
+{ "error": "Judul dan konten materi wajib diisi" }
 { "error": "akses ditolak: materi ini bukan milik Anda" }
+{ "error": "materi tidak ditemukan" }
 ```
 
-#### `DELETE /api/v1/materi/:id` — Hapus materi
-Hapus satu materi (manual maupun hasil AI).
+---
+
+### `DELETE /api/v1/materi/:id` — Hapus materi
+
+- **Auth:** Token Guru
+
+⚠️ Path parameter adalah **ID materi**.
+
+**curl:**
+```bash
+curl -X DELETE https://momo-be-production.up.railway.app/api/v1/materi/149 \
+  -H "Authorization: Bearer $TOKEN_GURU"
+```
 
 **Response (200):**
 ```json
 { "message": "Materi berhasil dihapus" }
 ```
 
-**Error — bukan milik guru (400):**
+**Error (400):**
 ```json
 { "error": "akses ditolak: materi ini bukan milik Anda" }
+{ "error": "materi tidak ditemukan" }
 ```
 
 ---
 
 ### `POST /api/v1/modul/:id/materi` — Upload PDF materi (SYNCHRONOUS)
 
-Upload PDF materi untuk dirangkum AI. **Request DITAHAN oleh backend sampai AI selesai merangkum** (biasanya 10–60 detik tergantung ukuran PDF). FE **wajib** menampilkan spinner/loading selama menunggu.
+- **Auth:** Token Guru
+- **Content-Type:** `multipart/form-data`
 
-**Headers:**
-```http
-Authorization: Bearer <token_guru>
-Content-Type: multipart/form-data
+⚠️ Request **ditahan** sampai AI selesai merangkum (10–60 detik). FE wajib menampilkan spinner + disable tombol.
+
+**Path parameter:** `id` = ID modul.
+
+**Body (form-data):**
+| Field | Tipe | Batas | Keterangan |
+|---|---|---|---|
+| `file` | file | `.pdf`, maks **25MB** | PDF berisi materi pembelajaran |
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/modul/3/materi \
+  -H "Authorization: Bearer $TOKEN_GURU" \
+  -F "file=@/path/materi.pdf"
 ```
-**Body:** field file bernama **`file`** (wajib `.pdf`, maksimal **25MB**).
 
-**Response sukses (200 OK) — hasil rangkuman ASLI:**
+**Response (200):** hasil rangkuman asli
 ```json
 {
   "message": "Materi berhasil diproses",
   "jumlah": 2,
   "data": [
-    {
-      "id": 11, "modul_id": 2, "urutan": 1,
-      "judul": "Pengenalan IPA",
-      "konten": "IPA adalah ilmu yang mempelajari..."
-    }
+    { "id": 11, "modul_id": 3, "urutan": 1, "judul": "Pengenalan IPA", "konten": "...", "created_at": "..." }
   ]
 }
 ```
-⚠️ **BREAKING CHANGE dari kontrak lama:** endpoint ini TIDAK LAGI mengembalikan pesan "sedang diproses di background". Panel hasil di FE harus merender array **`data`**, bukan `message`.
+⚠️ FE harus merender array **`data`**, bukan `message`.
 
-**Error (422):**
+**Error (400):**
 ```json
-{
-  "error": "Gagal memproses materi dari PDF. Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil.",
-  "code": "MATERI_PROCESSING_FAILED"
-}
-```
-Varian pesan `error` lain yang mungkin:
-- `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar.`
-- `...AI tidak menemukan konten materi yang valid. Pastikan PDF berisi materi pembelajaran, bukan soal.`
-
-**Error validasi file (400):**
-```json
+{ "error": "File PDF wajib dilampirkan dengan field 'file'" }
 { "error": "Ukuran file terlalu besar. Maksimal 25MB.", "code": "FILE_TOO_LARGE" }
 { "error": "Hanya file PDF yang diperbolehkan", "code": "INVALID_FILE_TYPE" }
 ```
 
-**Error kepemilikan (403):**
+**Error (403):**
 ```json
 { "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
+
+**Error (422):**
+```json
+{ "error": "Gagal memproses materi dari PDF. Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil.", "code": "MATERI_PROCESSING_FAILED" }
+```
+Varian pesan lain: `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar.` / `...AI tidak menemukan konten materi yang valid. Pastikan PDF berisi materi pembelajaran, bukan soal.`
+
+---
 
 ### `POST /api/v1/modul/:id/soal?jenis=uts` — Upload PDF soal (ASYNC)
 
-Upload PDF soal. Field file **`file`** (wajib `.pdf`, maksimal **5MB**). Query param `jenis` wajib: `harian`, `uts`, `uas`.
+- **Auth:** Token Guru
+- **Content-Type:** `multipart/form-data`
 
-Endpoint ini **tetap async**: response langsung kembali, ekstraksi AI berjalan di background.
+Proses ekstraksi AI berjalan di **background**; response langsung kembali.
 
-**Response sukses (202 Accepted):**
-```json
-{
-  "message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi",
-  "jenis": "uts"
-}
+**Path parameter:**
+| Param | Tipe | Keterangan |
+|---|---|---|
+| `id` | number | ID modul tujuan (harus milik guru yang login) |
+
+**Query parameter:**
+| Param | Wajib | Nilai valid |
+|---|---|---|
+| `jenis` | ✅ | `harian` / `uts` / `uas` |
+
+**Body (form-data):**
+| Field | Tipe | Batas | Keterangan |
+|---|---|---|---|
+| `file` | file | `.pdf`, maks **5MB** | PDF berisi soal pilihan ganda |
+
+**curl:**
+```bash
+curl -X POST "https://momo-be-production.up.railway.app/api/v1/modul/3/soal?jenis=uts" \
+  -H "Authorization: Bearer $TOKEN_GURU" \
+  -F "file=@/home/user/Documents/soal-ipa.pdf"
 ```
-FE harus **polling** `GET /modul/:id` (endpoint detail modul, BUKAN `GET /modul/:id/soal`) tiap ±5 detik sampai array `.soal` dengan jenis terkait tidak kosong.
 
-**Error kepemilikan (403):** dicek synchronous sebelum proses dimulai:
+**Response (202 Accepted):**
 ```json
-{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+{ "message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi", "jenis": "uts" }
 ```
+➡️ Setelah ini FE **polling `GET /modul/:id`** tiap ±5 detik sampai array `.soal` dengan `jenis` terkait tidak kosong. **Jangan** polling `GET /modul/:id/soal` (endpoint siswa).
 
-**Error validasi file (400):**
+**Error (400):**
 ```json
+{ "error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas" }
+{ "error": "File PDF wajib dilampirkan dengan field 'file'" }
 { "error": "Ukuran file terlalu besar. Maksimal 5MB.", "code": "FILE_TOO_LARGE" }
 { "error": "Hanya file PDF yang diperbolehkan", "code": "INVALID_FILE_TYPE" }
 ```
 
-### ⚠️ PENTING: `GET /api/v1/modul/:id/soal?jenis=uts` — KHUSUS SISWA
-
-**🚫 TIDAK BOLEH dipakai di halaman Guru!** Endpoint ini **hanya untuk Token Siswa** yang sudah join kelas.
-
-**Untuk halaman Guru (preview/polling soal):**
-```javascript
-// ✅ BENAR untuk dashboard guru:
-const res = await fetch(`${BASE}/api/v1/modul/${modulId}`, {
-  headers: { Authorization: `Bearer ${tokenGuru}` }
-});
-const modul = await res.json();
-const soalUTS = (modul.soal || []).filter(s => s.jenis === 'uts');
-setHasilSoal(soalUTS);
-```
-
-**Untuk halaman Siswa (ambil soal untuk dikerjakan):**
-```javascript
-// ✅ BENAR untuk halaman siswa:
-const res = await fetch(`${BASE}/api/v1/modul/${modulId}/soal?jenis=uts`, {
-  headers: { Authorization: `Bearer ${tokenSiswa}` }
-});
-const data = await res.json();
-setSoal(data.data); // array soal dengan pilihan sudah diacak
-```
-
-**Error jika token guru dipakai di endpoint ini (401):**
+**Error (403):** dicek synchronous sebelum proses dimulai
 ```json
-{
-  "error": "Endpoint ini khusus siswa. Token Anda bukan token siswa.",
-  "code": "TOKEN_WRONG_ROLE"
-}
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
 ```
 
-**Response sukses (200) — untuk Token Siswa:**
+---
+
+### ⚠️ `GET /api/v1/modul/:id/soal?jenis=uts` — Ambil soal (KHUSUS TOKEN SISWA)
+
+🚫 **TIDAK BOLEK dipanggil dari halaman Guru.** Halaman guru memakai `GET /modul/:id` lalu memfilter array `.soal`.
+
+- **Auth:** **Token Siswa** (siswa harus sudah join kelas yang tertaut modul ini)
+
+**Path parameter:**
+| Param | Tipe | Keterangan |
+|---|---|---|
+| `id` | number | ID modul yang sudah di-assign ke kelas siswa |
+
+**Query parameter:**
+| Param | Wajib | Nilai valid |
+|---|---|---|
+| `jenis` | ✅ | `harian` / `uts` / `uas` |
+
+**curl:**
+```bash
+curl "https://momo-be-production.up.railway.app/api/v1/modul/3/soal?jenis=uts" \
+  -H "Authorization: Bearer $TOKEN_SISWA"
+```
+
+**Response (200):** pilihan jawaban **sudah diacak backend**
 ```json
 {
   "jenis": "uts",
   "jumlah": 6,
   "data": [
     {
-      "id": 5,
-      "modul_id": 3,
-      "jenis": "uts",
+      "id": 5, "modul_id": 3, "jenis": "uts",
       "pertanyaan": "Perhatikan gambar ayunan bandul dibawah ini...",
       "pilihan_a": "2 sekon dan 0,5 Hz",
       "pilihan_b": "3 sekon dan 1 Hz",
@@ -518,176 +704,310 @@ setSoal(data.data); // array soal dengan pilihan sudah diacak
 }
 ```
 
-**Response (404) — soal belum selesai diproses / belum ada:**
+**Error (400):**
+```json
+{ "error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas" }
+{ "error": "ID modul tidak valid" }
+```
+
+**Error (401):** token guru dipakai di endpoint ini
+```json
+{ "error": "Endpoint ini khusus siswa. Token Anda bukan token siswa.", "code": "TOKEN_WRONG_ROLE" }
+```
+
+**Error (403):** modul belum ditugaskan ke kelas siswa
+```json
+{ "error": "modul ini tidak ditugaskan untuk kelas Anda" }
+```
+
+**Error (404):** soal belum ada / belum selesai diproses
 ```json
 { "error": "Belum ada soal untuk modul dan jenis ini" }
 ```
 
 ---
 
-## C. Kelas (Token Guru)
+## C. Kelas & Nilai (Token Guru)
 
-### `POST /api/v1/kelas`
-Field `mata_pelajaran` **WAJIB** diisi.
+### `POST /api/v1/kelas` — Buat kelas baru
 
-**Request:**
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `nama` | string | ✅ | ⚠️ field bernama `nama`, bukan `nama_kelas` |
+| `mata_pelajaran` | string | ✅ | |
+
 ```json
 { "nama": "Kelas 5A", "mata_pelajaran": "Matematika" }
 ```
-⚠️ Field yang benar adalah **`nama`**, BUKAN `nama_kelas`. Mengirim `nama_kelas` akan gagal validasi.
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Kelas 5A","mata_pelajaran":"Matematika"}'
+```
 
 **Response (201):**
 ```json
-{
-  "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika",
-  "kode_kelas": "487137", "created_at": "...", "updated_at": "..."
-}
+{ "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika", "kode_kelas": "487137", "created_at": "...", "updated_at": "..." }
 ```
-⚠️ Perhatikan asimetri ini: **request** pakai field `nama`, tapi **response** mengembalikannya sebagai `nama_kelas`.
-
+⚠️ Asimetri: request `nama` → response `nama_kelas`.
 📡 Memicu event SSE `kelas-created`.
 
-### `GET /api/v1/kelas` — DENGAN PAGINATION
-List semua kelas milik guru yang sedang login.
+**Error (400):**
+```json
+{ "error": "Nama dan Mata Pelajaran wajib diisi" }
+```
 
-**Query parameters (opsional):**
+---
+
+### `GET /api/v1/kelas` — List kelas (dengan pagination)
+
+- **Auth:** Token Guru
+
+**Query parameter:**
 | Param | Default | Keterangan |
 |---|---|---|
 | `page` | `1` | Nomor halaman |
-| `limit` | `10` | Jumlah data per halaman (maks 50) |
+| `limit` | `10` | Data per halaman (maks 50) |
 
-**Contoh:** `GET /api/v1/kelas?page=1&limit=10`
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  "https://momo-be-production.up.railway.app/api/v1/kelas?page=1&limit=10"
+```
 
-**Response (200):**
+**Response (200):** setiap item kelas menyertakan preload `siswa` dan `modul`
 ```json
 {
   "data": [
     {
       "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika",
-      "kode_kelas": "487137", "created_at": "...", "updated_at": "..."
+      "kode_kelas": "487137", "siswa": [ ... ], "modul": [ ... ],
+      "created_at": "...", "updated_at": "..."
     }
   ],
-  "meta": {
-    "page": 1,
-    "limit": 10,
-    "total": 3,
-    "total_page": 1
-  }
+  "meta": { "page": 1, "limit": 10, "total": 3, "total_page": 1 }
 }
 ```
-⚠️ **BREAKING CHANGE ringan:** response sekarang berbentuk object `{ data, meta }`, bukan array langsung. FE wajib membaca `response.data` untuk list kelas.
+⚠️ Response berbentuk object `{ data, meta }` — FE wajib membaca `response.data`.
 
-### `GET /api/v1/kelas/:id`
+---
+
+### `GET /api/v1/kelas/:id` — Detail kelas
+
+- **Auth:** Token Guru
+
+**Path parameter:** `id` = ID kelas.
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  https://momo-be-production.up.railway.app/api/v1/kelas/3
+```
+
 **Response (200):**
 ```json
 {
-  "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika",
-  "kode_kelas": "487137",
+  "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A", "mata_pelajaran": "Matematika", "kode_kelas": "487137",
   "siswa": [ { "id": 1, "kelas_id": 3, "nama": "Siswa Retest", "created_at": "..." } ],
   "modul": [ { "id": 2, "guru_id": 3, "nama": "Modul Retest", "deskripsi": "...", "created_at": "...", "updated_at": "..." } ],
   "created_at": "...", "updated_at": "..."
 }
 ```
 
-### `PUT /api/v1/kelas/:id`
-Update nama dan/atau mata pelajaran kelas. Hanya pemilik kelas yang bisa update.
+**Error (404):**
+```json
+{ "error": "kelas tidak ditemukan atau Anda tidak memiliki akses" }
+```
 
-**Request:** (kirim hanya field yang ingin diubah)
+---
+
+### `PUT /api/v1/kelas/:id` — Update kelas
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:** (kirim hanya field yang diubah)
+| Field | Tipe | Wajib |
+|---|---|---|
+| `nama` | string | ❌ |
+| `mata_pelajaran` | string | ❌ |
+
 ```json
 { "nama": "Kelas 5A Updated", "mata_pelajaran": "Matematika Lanjut" }
+```
+
+**curl:**
+```bash
+curl -X PUT https://momo-be-production.up.railway.app/api/v1/kelas/3 \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Kelas 5A Updated","mata_pelajaran":"Matematika Lanjut"}'
 ```
 
 **Response (200):**
 ```json
 {
   "message": "Kelas berhasil diperbarui",
-  "data": {
-    "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A Updated",
-    "mata_pelajaran": "Matematika Lanjut", "kode_kelas": "487137",
-    "created_at": "...", "updated_at": "..."
-  }
+  "data": { "id": 3, "guru_id": 3, "nama_kelas": "Kelas 5A Updated", "mata_pelajaran": "Matematika Lanjut", "kode_kelas": "487137", "created_at": "...", "updated_at": "..." }
 }
 ```
+📡 Memicu event SSE `kelas-updated`.
 
-**Error — bukan pemilik / tidak ditemukan (400):**
+**Error (400):**
 ```json
 { "error": "kelas tidak ditemukan atau Anda tidak memiliki akses" }
 ```
 
-📡 Memicu event SSE `kelas-updated`.
+---
 
-### `DELETE /api/v1/kelas/:id`
-Hapus kelas. Hanya pemilik kelas yang bisa menghapus.
+### `DELETE /api/v1/kelas/:id` — Hapus kelas
+
+- **Auth:** Token Guru
+
+**curl:**
+```bash
+curl -X DELETE https://momo-be-production.up.railway.app/api/v1/kelas/3 \
+  -H "Authorization: Bearer $TOKEN_GURU"
+```
 
 **Response (200):**
 ```json
 { "message": "Kelas berhasil dihapus" }
 ```
+📡 Memicu event SSE `kelas-deleted`.
 
-**Error — bukan pemilik / tidak ditemukan (400):**
+**Error (400):**
 ```json
 { "error": "kelas tidak ditemukan atau Anda tidak memiliki akses" }
 ```
 
-📡 Memicu event SSE `kelas-deleted`.
+---
 
-### `POST /api/v1/kelas/:id/siswa` (Daftarkan Siswa)
-**Request:**
+### `POST /api/v1/kelas/:id/siswa` — Daftarkan siswa ke kelas
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:**
+| Field | Tipe | Wajib |
+|---|---|---|
+| `nama` | string | ✅ |
+
 ```json
 { "nama": "Siswa Retest" }
 ```
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas/3/siswa \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Siswa Retest"}'
+```
+
 **Response (201):**
 ```json
 { "id": 1, "kelas_id": 3, "nama": "Siswa Retest", "created_at": "..." }
 ```
-**Error — nama duplikat dalam kelas yang sama (400):**
+
+**Error (400):**
 ```json
 { "error": "siswa dengan nama 'Siswa Retest' sudah terdaftar di kelas ini" }
 ```
 
-### `POST /api/v1/kelas/:id/modul` (Assign Modul ke Kelas)
-**Request:**
-```json
-{ "modul_id": 2 }
-```
+---
+
+### `POST /api/v1/kelas/:id/modul` — Tautkan modul ke kelas
+
+- **Auth:** Token Guru
+- **Content-Type:** `application/json`
+
+**Body:**
+| Field | Tipe | Wajib |
+|---|---|---|
+| `modul_id` | number | ✅ |
+
 **Response (200):**
 ```json
 { "message": "Modul berhasil ditautkan ke kelas" }
 ```
-*(Modul yang di-assign harus milik Guru yang sama dengan pemilik Kelas — kalau tidak, ditolak.)*
 
-### `DELETE /api/v1/kelas/:id/modul/:modul_id` (Lepas Modul dari Kelas)
-Melepas tautan modul dari kelas **tanpa** menghapus modul itu sendiri dari akun guru.
+**Error (400):** modul bukan milik guru / sudah tertaut / tidak ditemukan.
+
+---
+
+### `DELETE /api/v1/kelas/:id/modul/:modul_id` — Lepas modul dari kelas
+
+- **Auth:** Token Guru
+
+Melepas tautan **tanpa** menghapus modul dari akun guru.
 
 **Response (200):**
 ```json
 { "message": "Modul berhasil dihapus dari kelas" }
 ```
 
-### `GET /api/v1/kelas/:id/nilai?modul_id=X&jenis=Y`
-Dashboard rekap nilai. `modul_id` wajib, `jenis` opsional (`harian`/`uts`/`uas`).
+---
+
+### `GET /api/v1/kelas/:id/nilai` — Rekap nilai
+
+- **Auth:** Token Guru
+
+**Query parameter:**
+| Param | Wajib | Keterangan |
+|---|---|---|
+| `modul_id` | ✅ | ID modul yang direkap |
+| `jenis` | ❌ | `harian` / `uts` / `uas` (jika kosong = semua jenis) |
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  "https://momo-be-production.up.railway.app/api/v1/kelas/3/nilai?modul_id=3&jenis=uts"
+```
 
 **Response (200):**
 ```json
 [ { "siswa_id": 1, "nama": "Siswa Retest", "jumlah_soal_dijawab": 1, "jumlah_benar": 1, "skor_persen": 100 } ]
 ```
-*(Array kosong `[]` kalau belum ada siswa yang mengerjakan apapun.)*
+*(Array kosong `[]` jika belum ada siswa mengerjakan.)*
 
 ---
 
 ## D. Alur Siswa (Token Siswa)
 
 ### `GET /api/v1/modul/:id/soal?jenis=uts`
-Sama seperti bagian B, tapi dengan Token Siswa. Modul harus sudah di-assign ke Kelas siswa tersebut, kalau tidak akan ditolak.
+Lihat spesifikasi lengkap di bagian B (endpoint khusus siswa). Ringkasan: mengembalikan soal dengan pilihan teracak, tanpa kunci jawaban.
 
-### `POST /api/v1/submit-jawaban`
-**Request:**
+### `POST /api/v1/submit-jawaban` — Submit jawaban (dinilai AI)
+
+- **Auth:** Token Siswa
+- **Content-Type:** `application/json`
+- **Rate limit:** AI limiter
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `soal_id` | number | ✅ | |
+| `jawaban_mentah` | string | ✅ | Teks bebas hasil Speech-to-Text, tidak harus huruf A-D |
+
+⚠️ `siswa_id` **tidak dikirim** — diambil dari token (mencegah menjawab atas nama siswa lain).
+
 ```json
 { "soal_id": 1, "jawaban_mentah": "aku rasa jawabannya yang B" }
 ```
-⚠️ **`siswa_id` TIDAK dikirim di body** — sengaja diambil dari token JWT yang sedang login, untuk mencegah siswa "menjawab atas nama siswa lain". `jawaban_mentah` sengaja berupa teks bebas (hasil Speech-to-Text), bukan harus huruf `A`/`B`/`C`/`D`.
 
-**Response sukses (201):**
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/submit-jawaban \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_SISWA" \
+  -d '{"soal_id":1,"jawaban_mentah":"aku rasa jawabannya yang B"}'
+```
+
+**Response (201):**
 ```json
 {
   "id": 1, "siswa_id": 1, "soal_id": 1,
@@ -698,23 +1018,29 @@ Sama seperti bagian B, tapi dengan Token Siswa. Modul harus sudah di-assign ke K
   "created_at": "..."
 }
 ```
-*(Untuk soal jenis `uts`/`uas`, endpoint ini hanya bisa dipanggil SEKALI per siswa per soal — percobaan kedua akan ditolak.)*
+
+**Error (400):**
+```json
+{ "error": "Anda sudah menjawab soal ini sebelumnya" }
+```
+*(Berlaku untuk jenis `uts`/`uas`: satu siswa satu kali per soal. Jenis `harian` boleh berulang.)*
 
 ---
 
 ## E. Real-time Updates / SSE (Token Guru)
 
-Backend menyediakan **Server-Sent Events (SSE)** agar FE tidak perlu polling untuk update data kelas.
+### `GET /api/v1/kelas/stream` — Stream event kelas
 
-### `GET /api/v1/kelas/stream`
-Membuka koneksi streaming yang tetap terbuka. Server mengirim event setiap ada perubahan data kelas.
+- **Auth:** Token Guru
+
+Koneksi streaming yang tetap terbuka; server mengirim event setiap ada perubahan data kelas.
 
 **Headers wajib:**
 ```http
 Authorization: Bearer <token_guru>
 ```
 
-**Contoh output mentah (hasil curl nyata):**
+**Contoh output mentah (curl nyata):**
 ```text
 event: connected
 data: {"message":"Terhubung ke stream kelas","time":"2026-09-11T04:16:26Z"}
@@ -725,20 +1051,16 @@ event: kelas-created
 data: {"id":10,"guru_id":7,"nama_kelas":"Kelas SSE Test","mata_pelajaran":"Fisika","kode_kelas":"372475","created_at":"...","updated_at":"..."}
 ```
 
-### Daftar Event
-
+**Daftar event:**
 | Event | Kapan dikirim | Isi `data` |
 |---|---|---|
-| `connected` | Saat koneksi pertama dibuka | `{ "message", "time" }` |
-| `kelas-created` | Ada kelas baru dibuat | Object kelas lengkap |
-| `kelas-updated` | Ada kelas di-update | Object kelas lengkap |
-| `kelas-deleted` | Ada kelas dihapus | `{ "id": <id_kelas> }` |
-| `: heartbeat` | Setiap ±15 detik | komentar kosong — **abaikan saja**, fungsinya menjaga koneksi tetap hidup |
+| `connected` | Koneksi pertama dibuka | `{ "message", "time" }` |
+| `kelas-created` | Kelas baru dibuat | Object kelas lengkap |
+| `kelas-updated` | Kelas di-update | Object kelas lengkap |
+| `kelas-deleted` | Kelas dihapus | `{ "id": <id_kelas> }` |
+| `: heartbeat` | Tiap ±15 detik | Komentar kosong — **abaikan** |
 
-### Cara Pakai di Frontend
-
-⚠️ `EventSource` bawaan browser **tidak bisa** mengirim header `Authorization`. Gunakan `fetch` + `ReadableStream` seperti contoh berikut:
-
+**Implementasi FE** (`EventSource` tidak mendukung header Authorization, pakai `fetch` + `ReadableStream`):
 ```javascript
 const connectSSE = () => {
   const token = localStorage.getItem('token_guru');
@@ -759,7 +1081,7 @@ const connectSSE = () => {
 
       buffer += decoder.decode(value, { stream: true });
       const chunks = buffer.split('\n\n');
-      buffer = chunks.pop(); // simpan sisa pesan yang belum lengkap
+      buffer = chunks.pop();
 
       for (const chunk of chunks) {
         if (!chunk.trim() || chunk.startsWith(':')) continue; // abaikan heartbeat
@@ -768,11 +1090,9 @@ const connectSSE = () => {
         const dataMatch  = chunk.match(/^data: (.+)$/m);
         if (!eventMatch || !dataMatch) continue;
 
-        const eventType = eventMatch[1];
-        const data = JSON.parse(dataMatch[1]);
-
-        // Sebarkan sebagai custom event agar mudah didengar komponen mana pun
-        window.dispatchEvent(new CustomEvent('sse-' + eventType, { detail: data }));
+        window.dispatchEvent(new CustomEvent('sse-' + eventMatch[1], {
+          detail: JSON.parse(dataMatch[1])
+        }));
       }
     }
   };
@@ -780,142 +1100,121 @@ const connectSSE = () => {
   stream();
 };
 
-// Panggil sekali setelah login guru
-connectSSE();
+connectSSE(); // panggil sekali setelah login guru
 
-// Dengarkan di komponen (React/Vue/vanilla sama saja)
-window.addEventListener('sse-kelas-created', (e) => {
-  console.log('Kelas baru:', e.detail);   // -> tambah ke list / refetch
-});
-window.addEventListener('sse-kelas-updated', (e) => {
-  console.log('Kelas diubah:', e.detail); // -> update item di list
-});
-window.addEventListener('sse-kelas-deleted', (e) => {
-  console.log('Kelas dihapus:', e.detail.id); // -> buang item dari list
-});
+window.addEventListener('sse-kelas-created', (e) => { /* tambah ke list */ });
+window.addEventListener('sse-kelas-updated', (e) => { /* update item */ });
+window.addEventListener('sse-kelas-deleted', (e) => { /* buang item, id = e.detail.id */ });
 ```
 
-**Tips:**
-- Jika koneksi putus (network error), panggil ulang `connectSSE()` setelah jeda beberapa detik (retry dengan backoff).
-- Satu koneksi per tab browser sudah cukup — semua event kelas masuk lewat satu stream ini.
-- ⚠️ SSE **hanya** untuk event kelas. Untuk status proses SOAL (yang async), tetap gunakan polling `GET /modul/:id`.
+**Tips:** retry dengan backoff saat koneksi putus; satu koneksi per tab sudah cukup; SSE hanya untuk event kelas (status soal tetap polling `GET /modul/:id`).
 
-### Test cepat via curl
+**curl test:**
 ```bash
-# Terminal 1: buka stream
+# Terminal 1
 curl -N -H "Authorization: Bearer $TOKEN_GURU" \
   https://momo-be-production.up.railway.app/api/v1/kelas/stream
-
-# Terminal 2: picu event
+# Terminal 2
 curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN_GURU" \
-  -d '{"nama": "Kelas SSE Test", "mata_pelajaran": "Fisika"}'
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"nama":"Kelas SSE Test","mata_pelajaran":"Fisika"}'
 ```
+
+---
+
+## F. Lampiran: Endpoint Debug
+
+### `POST /api/v1/test-extract-pdf` — Uji ekstraksi PDF (debug only)
+
+- **Auth:** Publik
+- **Content-Type:** `multipart/form-data`
+- **Rate limit:** AI limiter
+
+Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database**. **Tidak dipakai oleh FE produksi** — bentuk response mengikuti output AI Service dan dapat berubah sewaktu-waktu.
 
 ---
 
 ## Error Handling
 
-### HTTP Status Codes yang Dipakai
+### HTTP Status Codes
 
 | Code | Arti | Contoh kasus |
 |---|---|---|
-| 200 | OK | GET, PUT, DELETE berhasil, join siswa, upload materi (sync sukses), update/delete modul |
-| 201 | Created | register guru, buat modul/kelas/siswa/materi, submit jawaban |
-| 202 | Accepted | upload soal (diproses di background) |
+| 200 | OK | GET, PUT, DELETE berhasil; join siswa; upload materi sync sukses |
+| 201 | Created | register, buat modul/kelas/siswa/materi, submit jawaban |
+| 202 | Accepted | upload soal (diproses background) |
+| 302 | Found | redirect verify-email |
 | 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar/bukan PDF, bukan pemilik resource |
-| 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah, **token wrong role** |
-| 403 | Forbidden | modul/kelas bukan milik user, origin CORS tidak diizinkan |
-| 404 | Not Found | resource tidak ada / bukan milik user yang login |
+| 401 | Unauthorized | token hilang/salah/kedaluwarsa/wrong role, login gagal, kode kelas salah |
+| 403 | Forbidden | resource bukan milik user, modul belum ditugaskan ke kelas siswa |
+| 404 | Not Found | resource tidak ada / bukan milik user |
 | 422 | Unprocessable Entity | proses AI gagal (materi) |
 | 429 | Too Many Requests | rate limit terlampaui |
 | 500 | Internal Server Error | kesalahan tak terduga di server |
 
 ### Error Codes (field `code`)
 
-| Code | Kapan muncul | Saran penanganan di FE |
+| Code | Kapan muncul | Saran penanganan FE |
 |---|---|---|
-| `TOKEN_MISSING` | Header Authorization tidak ada | Redirect ke halaman login |
-| `TOKEN_INVALID_FORMAT` | Format header bukan `Bearer <token>` | Perbaiki cara kirim header |
-| `TOKEN_INVALID` | Token tidak valid / kedaluwarsa | Hapus token lama, redirect login. Pesan sudah ramah: "Sesi Anda telah berakhir. Silakan login kembali." |
-| 🆕 `TOKEN_WRONG_ROLE` | Token guru dipakai di endpoint siswa, atau sebaliknya | **FE bug:** cek apakah jenis token sesuai dengan halaman yang sedang dibuka. Tampilkan pesan "Jenis akun tidak sesuai dengan halaman ini" dan redirect ke halaman yang benar |
-| `FILE_TOO_LARGE` | Upload melebihi batas (materi 25MB / soal 5MB) | Tampilkan pesan ukuran maksimal |
+| `TOKEN_MISSING` | Header Authorization tidak ada | Redirect login |
+| `TOKEN_INVALID_FORMAT` | Format header bukan `Bearer <token>` | Perbaiki pengiriman header |
+| `TOKEN_INVALID` | Token tidak valid / kedaluwarsa | Hapus token, redirect login ("Sesi Anda telah berakhir...") |
+| `TOKEN_WRONG_ROLE` | Token guru di endpoint siswa atau sebaliknya | Bug FE: samakan jenis token dengan halaman; redirect ke halaman yang benar |
+| `FILE_TOO_LARGE` | Upload melebihi batas (materi 25MB / soal 5MB) | Tampilkan batas ukuran |
 | `INVALID_FILE_TYPE` | File bukan `.pdf` | Tampilkan "hanya PDF yang didukung" |
-| `MATERI_PROCESSING_FAILED` | AI gagal merangkum materi | Tampilkan field `error` apa adanya (sudah ramah) |
+| `MATERI_PROCESSING_FAILED` | AI gagal merangkum materi | Tampilkan field `error` apa adanya |
 
 ---
 
 ## Known Issues / Catatan untuk FE
 
-1. **Inkonsistensi nama field `nama` vs `nama_kelas`** di endpoint Kelas — request pakai `nama`, response balikin `nama_kelas`. Ini perilaku aktual yang sudah dikonfirmasi.
-2. **Lokasi token beda** antara Login Guru (`data.token`) dan Join Siswa (`.token` langsung) — pastikan FE menangani dua struktur berbeda ini.
-3. `GET /modul/:id` mengembalikan field **`judul`** untuk nama Modul, sementara endpoint lain (create/list) pakai `nama` — perhatikan saat parsing response.
-4. **`kunci_jawaban` tidak pernah dikirim** ke endpoint manapun, termasuk ke guru pemilik soal — ini keputusan keamanan yang disengaja.
-5. 🔄 **Materi sekarang SYNCHRONOUS** (12 Sept): `POST /modul/:id/materi` menahan request 10–60 detik lalu mengembalikan array `data`. FE wajib: (a) tampilkan spinner + disable tombol selama menunggu, (b) render `data`, JANGAN render `message` sebagai isi rangkuman, (c) hapus template statis "Status Pemrosesan Materi" peninggalan kontrak async lama.
-6. 🔄 **`GET /kelas` sekarang berbentuk `{ data, meta }`** karena pagination — FE wajib membaca `response.data`, bukan array langsung.
-7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id` (BUKAN `GET /modul/:id/soal`) tiap ±5 detik sampai array `.soal` dengan jenis terkait tidak kosong.
-8. **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
-9. Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
-10. **Materi punya 2 sumber**: hasil AI (dari upload PDF) dan tulis manual. Keduanya bercampur rapi di `GET /modul/:id/materi`, terurut berdasarkan field `urutan`. FE perlu tombol "Generate dari PDF" dan "Tulis Manual" yang terpisah.
-11. **Endpoint CRUD materi pakai path berbeda**: list pakai `/modul/:id/materi` (scoped modul), tapi update/delete pakai `/materi/:id` langsung (karena ID materi sudah unik).
-12. **CRUD Modul sekarang LENGKAP**: selain Create & Read, sudah tersedia `PUT /modul/:id` dan `DELETE /modul/:id`. **Hapus modul = hapus semua materi & soal di dalamnya** (cascade). FE sebaiknya menampilkan konfirmasi peringatan sebelum delete.
-13. **Response `PUT /modul/:id` tidak menyertakan materi/soal** — hanya info modul itu sendiri. Kalau FE butuh data lengkap, panggil ulang `GET /modul/:id`.
-14. 🆕 **ROLE ISOLATION AKTIF (14 Sept 2026):**
-    - Token Guru **TIDAK BISA** dipakai di endpoint khusus Siswa → error `TOKEN_WRONG_ROLE`
-    - Token Siswa **TIDAK BISA** dipakai di endpoint khusus Guru → error `TOKEN_WRONG_ROLE`
-    - **Halaman Guru (Generate Soal, Dashboard Kelas, dll):** gunakan `GET /modul/:id` untuk preview/polling soal
-    - **Halaman Siswa (Kerjakan Soal):** gunakan `GET /modul/:id/soal` untuk ambil soal
-    - Jangan pernah memanggil endpoint siswa dari halaman guru, atau sebaliknya
-15. 🆕 **Bug FE yang sudah ditemukan (14 Sept 2026):** Halaman Generate Soal memanggil `GET /modul/:id/soal` (endpoint siswa) dengan token guru → error "modul ini tidak ditugaskan untuk kelas Anda". **Fix:** ganti ke `GET /modul/:id` dan filter array `.soal` berdasarkan `jenis`.
+1. **`nama` vs `nama_kelas`** di endpoint Kelas: request pakai `nama`, response mengembalikan `nama_kelas`.
+2. **Lokasi token berbeda**: login guru `data.token`, join siswa `.token` (root).
+3. **`judul` vs `nama`** untuk modul: `GET /modul/:id` memakai `judul`, endpoint lain memakai `nama`.
+4. **`kunci_jawaban` tidak pernah dikirim** ke endpoint manapun — keputusan keamanan.
+5. **Object materi tidak punya `updated_at`** — hanya `created_at`.
+6. **Materi SYNCHRONOUS**: `POST /modul/:id/materi` menahan request 10–60 detik; FE wajib spinner + render array `data` (bukan `message`).
+7. **Soal ASYNC**: setelah 202, polling `GET /modul/:id` (bukan `GET /modul/:id/soal`) sampai `.soal` dengan jenis terkait terisi.
+8. **`GET /kelas` berbentuk `{ data, meta }`** karena pagination — baca `response.data`.
+9. **Role isolation aktif**: token guru ≠ endpoint siswa, dan sebaliknya (`TOKEN_WRONG_ROLE`). Halaman guru pakai `GET /modul/:id` untuk preview soal; halaman siswa pakai `GET /modul/:id/soal`.
+10. **Pilihan jawaban diacak backend** per request pada `GET /modul/:id/soal` — FE tidak perlu mengacak lagi.
+11. **`PUT /modul/:id` menimpa deskripsi selalu**: mengirim hanya `nama` akan mengosongkan deskripsi. Kirim keduanya untuk aman.
+12. **Response `PUT /modul/:id` menyertakan preload materi & soal** (payload besar) — jangan render langsung sebagai list, ambil field yang diperlukan saja.
+13. **Materi dua sumber** (AI & manual) bercampur di `GET /modul/:id/materi`, terurut `urutan` ASC.
+14. **Path CRUD materi berbeda**: list scoped modul (`/modul/:id/materi`), update/delete scoped materi (`/materi/:id`).
+15. **Delete modul = cascade**: semua materi & soal di dalamnya ikut terhapus — FE wajib konfirmasi ganda.
+16. **Submit jawaban `uts`/`uas` sekali per siswa per soal**; `harian` boleh berulang.
+17. **Registrasi guru memicu email verifikasi**; link memanggil `GET /guru/verify-email` yang me-redirect ke FE dengan `?status=success|error`.
+18. **SSE heartbeat** (`: heartbeat`) adalah komentar — parser FE wajib mengabaikannya.
+19. **`/test-extract-pdf` hanya untuk debug** — jangan dipakai di alur produksi.
 
 ---
 
 ## Changelog
 
 ### 14 September 2026
-- 🆕 **Role Isolation:** Middleware sekarang memvalidasi role token
-  - Token guru yang dipakai di endpoint siswa → `TOKEN_WRONG_ROLE`
-  - Token siswa yang dipakai di endpoint guru → `TOKEN_WRONG_ROLE`
-- 🆕 **Panduan endpoint soal untuk Guru vs Siswa:**
-  - Guru: `GET /modul/:id` (detail modul, filter `.soal`)
-  - Siswa: `GET /modul/:id/soal` (endpoint khusus siswa)
-- ✅ Validasi upload soal: 6 soal UTS berhasil diekstrak dari PDF "KUMPULAN SOAL IPA KELAS 8"
+- 🔒 **Role isolation aktif** di middleware: token guru di endpoint siswa (dan sebaliknya) → `401 TOKEN_WRONG_ROLE`
+- 📄 Dokumentasi: semua blok endpoint dirapikan dengan format konsisten (Auth → Content-Type → Rate limit → Params → Body → curl → Response → Error)
+- 📄 Dokumentasi: request spec lengkap untuk endpoint soal (upload & ambil)
+- 📄 Dokumentasi: koreksi field materi (tanpa `updated_at`), perilaku `PUT /modul/:id` (deskripsi selalu ditimpa; response menyertakan preload), endpoint `verify-email`, dan lampiran `test-extract-pdf`
+- ✅ Validasi pipeline soal: 6 soal UTS berhasil diekstrak dari PDF kumpulan soal
 
 ### 12 September 2026 (update 3)
-- 🆕 **CRUD Modul Lengkap:** tambahkan Update & Delete
-  - `PUT /api/v1/modul/:id` — update nama/deskripsi modul
-  - `DELETE /api/v1/modul/:id` — hapus modul + cascade delete materi & soal
-- ✅ Validasi kepemilikan modul (hanya guru pemilik yang bisa update/delete)
-- ✅ Pesan error ramah untuk kasus bukan pemilik
+- 🆕 CRUD Modul lengkap: `PUT /modul/:id`, `DELETE /modul/:id` (cascade materi & soal)
 
 ### 12 September 2026 (update 2)
-- 🆕 **CRUD Materi Manual:** 4 endpoint baru untuk menulis materi tanpa PDF
-  - `GET /api/v1/modul/:id/materi` — list semua materi
-  - `POST /api/v1/modul/:id/materi/manual` — buat materi manual
-  - `PUT /api/v1/materi/:id` — update materi
-  - `DELETE /api/v1/materi/:id` — hapus materi
-- ✅ Materi dari AI dan materi manual bercampur rapi, terurut berdasarkan `urutan`
-- ✅ Validasi kepemilikan materi (hanya guru pemilik modul yang bisa CRUD)
+- 🆕 CRUD Materi manual: `GET /modul/:id/materi`, `POST /modul/:id/materi/manual`, `PUT /materi/:id`, `DELETE /materi/:id`
 
 ### 12 September 2026
-- 🔄 **BREAKING:** `POST /api/v1/modul/:id/materi` sekarang **SYNCHRONOUS** — response 200 berisi array `data` rangkuman asli (sebelumnya 202 async dengan pesan status)
-- 🔄 **BREAKING ringan:** `GET /api/v1/kelas` mendukung pagination (`?page=&limit=`) dan response berbentuk `{ data, meta }`
-- ✅ Validasi upload file: materi maks **25MB**, soal maks **5MB**, wajib ekstensi `.pdf` (code `FILE_TOO_LARGE`, `INVALID_FILE_TYPE`)
-- ✅ Pesan error autentikasi lebih ramah + field `code` (`TOKEN_MISSING`, `TOKEN_INVALID_FORMAT`, `TOKEN_INVALID`)
-- ✅ Pesan error validasi register/login lebih manusiawi
-- ✅ Error proses AI materi mengembalikan 422 dengan `code: MATERI_PROCESSING_FAILED` dan pesan siap tampil
-- ✅ Timeout AI Service dinaikkan ke 120 detik untuk PDF besar
+- 🔄 BREAKING: `POST /modul/:id/materi` menjadi SYNCHRONOUS (200 + array `data`)
+- 🔄 BREAKING ringan: `GET /kelas` berbentuk `{ data, meta }` (pagination)
+- ✅ Validasi upload file (materi 25MB / soal 5MB, wajib `.pdf`)
+- ✅ Error auth ramah + field `code`; timeout AI 120 detik
 
 ### 11 September 2026
-- 🆕 `GET /api/v1/kelas` — list semua kelas milik guru
-- 🆕 `PUT /api/v1/kelas/:id` — update kelas
-- 🆕 `DELETE /api/v1/kelas/:id` — hapus kelas
-- 🆕 `DELETE /api/v1/kelas/:id/modul/:modul_id` — lepas modul dari kelas
-- 🆕 `GET /api/v1/kelas/stream` — real-time updates via SSE
-- ⚠️ BREAKING: `POST /api/v1/kelas` sekarang wajib menyertakan `mata_pelajaran`
-- ✅ Base URL production ditetapkan: `https://momo-be-production.up.railway.app`
-- ✅ Optimasi performa: index database, connection pooling, keep-warm Neon
+- 🆕 CRUD Kelas lengkap + `GET /kelas/stream` (SSE)
+- ⚠️ BREAKING: `POST /kelas` wajib `mata_pelajaran`
+- ✅ Optimasi performa: index DB, connection pooling, keep-warm Neon
 
 ### 1 September 2026
 - Dokumentasi awal berdasarkan testing langsung seluruh endpoint existing.
