@@ -43,8 +43,8 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		return
 	}
 
-	// Validasi kepemilikan Modul dilakukan SEKARANG (synchronous), bukan di background,
-	// supaya guru langsung tahu kalau ditolak, tanpa nunggu proses PDF/AI selesai dulu.
+	// Validasi kepemilikan Modul dilakukan SEKARANG (synchronous),
+	// supaya guru langsung tahu kalau ditolak, tanpa nunggu proses PDF/AI.
 	if err := h.service.ValidateModulOwnership(uint(modulID), guruID); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
@@ -56,7 +56,7 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		return
 	}
 
-	// --- POLISH: Validasi Ukuran & Tipe File ---
+	// --- Validasi Ukuran & Tipe File ---
 	const maxSize = 5 * 1024 * 1024 // 5MB
 	if file.Size > maxSize {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -74,7 +74,7 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 		})
 		return
 	}
-	// ------------------------------------------
+	// -----------------------------------
 
 	src, err := file.Open()
 	if err != nil {
@@ -90,7 +90,7 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	}
 
 	_, err = io.Copy(tempFile, src)
-	tempFile.Close() // tutup sekarang juga, bukan lewat defer, karena goroutine di bawah butuh path-nya, bukan handle Go yang sama
+	tempFile.Close()
 	if err != nil {
 		os.Remove(tempFile.Name())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file sementara"})
@@ -98,23 +98,49 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	}
 
 	tempFilePath := tempFile.Name()
+	defer os.Remove(tempFilePath)
 
-	// Proses berat (ekstrak PDF + panggil AI Service + simpan) dikerjakan di background,
-	// TIDAK menahan response HTTP ini. Guru/FE polling GET /modul/:id/soal untuk lihat hasilnya nanti.
-	go func() {
-		defer os.Remove(tempFilePath)
+	// ============================================================
+	// SYNCHRONOUS (14 Sept): request DITAHAN sampai AI selesai
+	// mengekstrak + menyimpan soal. FE tidak menerima response
+	// apapun sebelum proses benar-benar selesai.
+	// ============================================================
+	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFilePath, guruID)
+	if err != nil {
+		log.Printf("[soal] gagal memproses soal untuk modul %d: %v", modulID, err)
 
-		soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFilePath, guruID)
-		if err != nil {
-			log.Printf("[background] gagal memproses soal untuk modul %d: %v", modulID, err)
-			return
+		errMsg := "Gagal memproses soal dari PDF. "
+		switch {
+		case strings.Contains(err.Error(), "ekstrak PDF"):
+			errMsg += "File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar."
+		case strings.Contains(err.Error(), "AI Service"), strings.Contains(err.Error(), "timeout"):
+			errMsg += "Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil."
+		case strings.Contains(err.Error(), "tidak menemukan"):
+			errMsg += "AI tidak menemukan soal pilihan ganda yang valid di PDF ini."
+		default:
+			errMsg += err.Error()
 		}
-		log.Printf("[background] berhasil memproses %d soal untuk modul %d", len(soalList), modulID)
-	}()
 
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "PDF sedang diproses di background, cek daftar soal beberapa saat lagi",
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": errMsg,
+			"code":  "SOAL_PROCESSING_FAILED",
+		})
+		return
+	}
+
+	// Konversi ke SoalResponse agar kunci_jawaban TIDAK bocor ke FE
+	responseData := make([]SoalResponse, 0, len(soalList))
+	for _, soal := range soalList {
+		responseData = append(responseData, ToSoalResponse(soal))
+	}
+
+	log.Printf("[soal] berhasil memproses %d soal untuk modul %d", len(responseData), modulID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Soal berhasil diproses",
 		"jenis":   jenis,
+		"jumlah":  len(responseData),
+		"data":    responseData,
 	})
 }
 
