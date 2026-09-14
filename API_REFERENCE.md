@@ -1,7 +1,7 @@
 # API Reference — Momo-BE
 
 Dokumen ini disusun berdasarkan **testing langsung terhadap kode yang berjalan** (bukan asumsi).
-Versi awal: 1 September 2026 · **Update terakhir: 12 September 2026**.
+Versi awal: 1 September 2026 · **Update terakhir: 14 September 2026**.
 Semua contoh request/response di bawah adalah hasil `curl` nyata.
 
 ---
@@ -31,16 +31,19 @@ Semua contoh request/response di bawah adalah hasil `curl` nyata.
 
 Semua endpoint berada di bawah prefix `/api/v1`, kecuali `/health`.
 
-### Dua Jenis Token JWT
+### ⚠️ PENTING: Dua Jenis Token JWT (Role Isolation)
 
 | | Token Guru | Token Siswa |
 |---|---|---|
 | Didapat dari | `POST /api/v1/guru/login` | `POST /api/v1/join` |
 | Isi claim | `guru_id`, `role: "guru"` | `siswa_id`, `kelas_id` |
 | Masa berlaku | 24 jam | 12 jam |
-| Dipakai untuk endpoint | Semua endpoint kelola Guru (Modul, Materi, Kelas, dst.) | `GET /modul/:id/soal`, `POST /submit-jawaban` |
+| Dipakai untuk endpoint | **Semua endpoint Guru** (Modul, Materi, Kelas, SSE) | **Hanya endpoint Siswa** (`GET /modul/:id/soal`, `POST /submit-jawaban`) |
 
-Kedua jenis token **tidak bisa dipertukarkan** — token Siswa tidak akan diterima di endpoint khusus Guru, dan sebaliknya.
+**🔒 ROLE ISOLATION AKTIF (14 Sept 2026):**
+- Token Guru **TIDAK BISA** dipakai di endpoint khusus Siswa → error `TOKEN_WRONG_ROLE`
+- Token Siswa **TIDAK BISA** dipakai di endpoint khusus Guru → error `TOKEN_WRONG_ROLE`
+- FE harus pastikan **jenis token sesuai dengan halaman yang sedang dibuka**
 
 ### CORS
 
@@ -206,13 +209,17 @@ GURU (pemilik)
 List semua Modul **milik guru yang sedang login saja**.
 **Response (200):** array objek Modul seperti di atas.
 
-### `GET /api/v1/modul/:id`
+### `GET /api/v1/modul/:id` — Detail modul (termasuk soal & materi)
 **Response sukses (200):**
 ```json
 {
   "id": 2, "judul": "Modul IPA", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
-  "materi": [ ... ],
-  "soal": [ { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "..." } ]
+  "materi": [
+    { "id": 1, "modul_id": 2, "urutan": 1, "judul": "...", "konten": "...", "created_at": "..." }
+  ],
+  "soal": [
+    { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...", "created_at": "..." }
+  ]
 }
 ```
 ⚠️ Perhatikan field **`judul`** di response detail ini (beda dari `nama` yang dipakai di request/list). `kunci_jawaban` **sengaja tidak pernah muncul** di endpoint ini, termasuk untuk Guru pemilik soal.
@@ -444,7 +451,7 @@ Endpoint ini **tetap async**: response langsung kembali, ekstraksi AI berjalan d
   "jenis": "uts"
 }
 ```
-FE harus **polling** `GET /modul/:id/soal?jenis=...` (misal tiap 5 detik) sampai data soal muncul.
+FE harus **polling** `GET /modul/:id` (endpoint detail modul, BUKAN `GET /modul/:id/soal`) tiap ±5 detik sampai array `.soal` dengan jenis terkait tidak kosong.
 
 **Error kepemilikan (403):** dicek synchronous sebelum proses dimulai:
 ```json
@@ -457,15 +464,57 @@ FE harus **polling** `GET /modul/:id/soal?jenis=...` (misal tiap 5 detik) sampai
 { "error": "Hanya file PDF yang diperbolehkan", "code": "INVALID_FILE_TYPE" }
 ```
 
-### `GET /api/v1/modul/:id/soal?jenis=uts`
-Dipakai **Guru maupun Siswa** (Siswa butuh Token Siswa, dan Modul-nya harus sudah di-assign ke Kelas siswa itu — lihat bagian C & D).
+### ⚠️ PENTING: `GET /api/v1/modul/:id/soal?jenis=uts` — KHUSUS SISWA
 
-**Response (200):**
+**🚫 TIDAK BOLEH dipakai di halaman Guru!** Endpoint ini **hanya untuk Token Siswa** yang sudah join kelas.
+
+**Untuk halaman Guru (preview/polling soal):**
+```javascript
+// ✅ BENAR untuk dashboard guru:
+const res = await fetch(`${BASE}/api/v1/modul/${modulId}`, {
+  headers: { Authorization: `Bearer ${tokenGuru}` }
+});
+const modul = await res.json();
+const soalUTS = (modul.soal || []).filter(s => s.jenis === 'uts');
+setHasilSoal(soalUTS);
+```
+
+**Untuk halaman Siswa (ambil soal untuk dikerjakan):**
+```javascript
+// ✅ BENAR untuk halaman siswa:
+const res = await fetch(`${BASE}/api/v1/modul/${modulId}/soal?jenis=uts`, {
+  headers: { Authorization: `Bearer ${tokenSiswa}` }
+});
+const data = await res.json();
+setSoal(data.data); // array soal dengan pilihan sudah diacak
+```
+
+**Error jika token guru dipakai di endpoint ini (401):**
+```json
+{
+  "error": "Endpoint ini khusus siswa. Token Anda bukan token siswa.",
+  "code": "TOKEN_WRONG_ROLE"
+}
+```
+
+**Response sukses (200) — untuk Token Siswa:**
 ```json
 {
   "jenis": "uts",
-  "jumlah": 1,
-  "data": [ { "id": 1, "modul_id": 2, "jenis": "uts", "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "..." } ]
+  "jumlah": 6,
+  "data": [
+    {
+      "id": 5,
+      "modul_id": 3,
+      "jenis": "uts",
+      "pertanyaan": "Perhatikan gambar ayunan bandul dibawah ini...",
+      "pilihan_a": "2 sekon dan 0,5 Hz",
+      "pilihan_b": "3 sekon dan 1 Hz",
+      "pilihan_c": "4 sekon dan 2 Hz",
+      "pilihan_d": "5 sekon dan 3 Hz",
+      "created_at": "..."
+    }
+  ]
 }
 ```
 
@@ -749,7 +798,7 @@ window.addEventListener('sse-kelas-deleted', (e) => {
 **Tips:**
 - Jika koneksi putus (network error), panggil ulang `connectSSE()` setelah jeda beberapa detik (retry dengan backoff).
 - Satu koneksi per tab browser sudah cukup — semua event kelas masuk lewat satu stream ini.
-- ⚠️ SSE **hanya** untuk event kelas. Untuk status proses SOAL (yang async), tetap gunakan polling `GET /modul/:id/soal`.
+- ⚠️ SSE **hanya** untuk event kelas. Untuk status proses SOAL (yang async), tetap gunakan polling `GET /modul/:id`.
 
 ### Test cepat via curl
 ```bash
@@ -776,7 +825,7 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 | 201 | Created | register guru, buat modul/kelas/siswa/materi, submit jawaban |
 | 202 | Accepted | upload soal (diproses di background) |
 | 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar/bukan PDF, bukan pemilik resource |
-| 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah |
+| 401 | Unauthorized | token hilang/salah/kedaluwarsa, login gagal, kode kelas salah, **token wrong role** |
 | 403 | Forbidden | modul/kelas bukan milik user, origin CORS tidak diizinkan |
 | 404 | Not Found | resource tidak ada / bukan milik user yang login |
 | 422 | Unprocessable Entity | proses AI gagal (materi) |
@@ -790,6 +839,7 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 | `TOKEN_MISSING` | Header Authorization tidak ada | Redirect ke halaman login |
 | `TOKEN_INVALID_FORMAT` | Format header bukan `Bearer <token>` | Perbaiki cara kirim header |
 | `TOKEN_INVALID` | Token tidak valid / kedaluwarsa | Hapus token lama, redirect login. Pesan sudah ramah: "Sesi Anda telah berakhir. Silakan login kembali." |
+| 🆕 `TOKEN_WRONG_ROLE` | Token guru dipakai di endpoint siswa, atau sebaliknya | **FE bug:** cek apakah jenis token sesuai dengan halaman yang sedang dibuka. Tampilkan pesan "Jenis akun tidak sesuai dengan halaman ini" dan redirect ke halaman yang benar |
 | `FILE_TOO_LARGE` | Upload melebihi batas (materi 25MB / soal 5MB) | Tampilkan pesan ukuran maksimal |
 | `INVALID_FILE_TYPE` | File bukan `.pdf` | Tampilkan "hanya PDF yang didukung" |
 | `MATERI_PROCESSING_FAILED` | AI gagal merangkum materi | Tampilkan field `error` apa adanya (sudah ramah) |
@@ -804,17 +854,33 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
 4. **`kunci_jawaban` tidak pernah dikirim** ke endpoint manapun, termasuk ke guru pemilik soal — ini keputusan keamanan yang disengaja.
 5. 🔄 **Materi sekarang SYNCHRONOUS** (12 Sept): `POST /modul/:id/materi` menahan request 10–60 detik lalu mengembalikan array `data`. FE wajib: (a) tampilkan spinner + disable tombol selama menunggu, (b) render `data`, JANGAN render `message` sebagai isi rangkuman, (c) hapus template statis "Status Pemrosesan Materi" peninggalan kontrak async lama.
 6. 🔄 **`GET /kelas` sekarang berbentuk `{ data, meta }`** karena pagination — FE wajib membaca `response.data`, bukan array langsung.
-7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id/soal?jenis=...` tiap ±5 detik sampai muncul data.
+7. **Soal masih ASYNC**: setelah `POST /modul/:id/soal` (202), FE polling `GET /modul/:id` (BUKAN `GET /modul/:id/soal`) tiap ±5 detik sampai array `.soal` dengan jenis terkait tidak kosong.
 8. **Gunakan SSE** (`GET /kelas/stream`) untuk sinkronisasi list kelas, bukan polling `GET /kelas` berulang.
 9. Baris `: heartbeat` di stream SSE adalah komentar — parser FE harus mengabaikannya.
 10. **Materi punya 2 sumber**: hasil AI (dari upload PDF) dan tulis manual. Keduanya bercampur rapi di `GET /modul/:id/materi`, terurut berdasarkan field `urutan`. FE perlu tombol "Generate dari PDF" dan "Tulis Manual" yang terpisah.
 11. **Endpoint CRUD materi pakai path berbeda**: list pakai `/modul/:id/materi` (scoped modul), tapi update/delete pakai `/materi/:id` langsung (karena ID materi sudah unik).
-12. 🆕 **CRUD Modul sekarang LENGKAP**: selain Create & Read, sudah tersedia `PUT /modul/:id` dan `DELETE /modul/:id`. **Hapus modul = hapus semua materi & soal di dalamnya** (cascade). FE sebaiknya menampilkan konfirmasi peringatan sebelum delete.
-13. 🆕 **Response `PUT /modul/:id` tidak menyertakan materi/soal** — hanya info modul itu sendiri. Kalau FE butuh data lengkap, panggil ulang `GET /modul/:id`.
+12. **CRUD Modul sekarang LENGKAP**: selain Create & Read, sudah tersedia `PUT /modul/:id` dan `DELETE /modul/:id`. **Hapus modul = hapus semua materi & soal di dalamnya** (cascade). FE sebaiknya menampilkan konfirmasi peringatan sebelum delete.
+13. **Response `PUT /modul/:id` tidak menyertakan materi/soal** — hanya info modul itu sendiri. Kalau FE butuh data lengkap, panggil ulang `GET /modul/:id`.
+14. 🆕 **ROLE ISOLATION AKTIF (14 Sept 2026):**
+    - Token Guru **TIDAK BISA** dipakai di endpoint khusus Siswa → error `TOKEN_WRONG_ROLE`
+    - Token Siswa **TIDAK BISA** dipakai di endpoint khusus Guru → error `TOKEN_WRONG_ROLE`
+    - **Halaman Guru (Generate Soal, Dashboard Kelas, dll):** gunakan `GET /modul/:id` untuk preview/polling soal
+    - **Halaman Siswa (Kerjakan Soal):** gunakan `GET /modul/:id/soal` untuk ambil soal
+    - Jangan pernah memanggil endpoint siswa dari halaman guru, atau sebaliknya
+15. 🆕 **Bug FE yang sudah ditemukan (14 Sept 2026):** Halaman Generate Soal memanggil `GET /modul/:id/soal` (endpoint siswa) dengan token guru → error "modul ini tidak ditugaskan untuk kelas Anda". **Fix:** ganti ke `GET /modul/:id` dan filter array `.soal` berdasarkan `jenis`.
 
 ---
 
 ## Changelog
+
+### 14 September 2026
+- 🆕 **Role Isolation:** Middleware sekarang memvalidasi role token
+  - Token guru yang dipakai di endpoint siswa → `TOKEN_WRONG_ROLE`
+  - Token siswa yang dipakai di endpoint guru → `TOKEN_WRONG_ROLE`
+- 🆕 **Panduan endpoint soal untuk Guru vs Siswa:**
+  - Guru: `GET /modul/:id` (detail modul, filter `.soal`)
+  - Siswa: `GET /modul/:id/soal` (endpoint khusus siswa)
+- ✅ Validasi upload soal: 6 soal UTS berhasil diekstrak dari PDF "KUMPULAN SOAL IPA KELAS 8"
 
 ### 12 September 2026 (update 3)
 - 🆕 **CRUD Modul Lengkap:** tambahkan Update & Delete
