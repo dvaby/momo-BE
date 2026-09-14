@@ -749,6 +749,193 @@ curl "https://momo-be-production.up.railway.app/api/v1/modul/3/soal?jenis=uts" \
 
 ---
 
+### CRUD Soal Manual (14 Sept 2026)
+
+Selain upload PDF (yang diekstrak AI), guru juga bisa menulis soal **manual** langsung di form. Soal manual dan hasil AI **bercampur dalam satu list**.
+
+⚠️ **Keamanan:** field `kunci_jawaban` **TIDAK PERNAH muncul** di response manapun (termasuk response `POST /soal/manual` dan `PUT /soal/:id`), konsisten dengan endpoint siswa.
+
+#### `GET /api/v1/modul/:id/soal/list?jenis=uts` — List soal (KHUSUS GURU)
+
+Endpoint khusus dashboard guru untuk melihat soal dengan filter jenis.
+
+**Path parameter:**
+| Param | Tipe | Keterangan |
+|---|---|---|
+| `id` | number | ID modul (harus milik guru yang login) |
+
+**Query parameter:**
+| Param | Wajib | Keterangan |
+|---|---|---|
+| `jenis` | ❌ | `harian` / `uts` / `uas` — jika kosong, kembalikan semua jenis |
+
+**curl:**
+```bash
+# Filter hanya UTS
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  "https://momo-be-production.up.railway.app/api/v1/modul/3/soal/list?jenis=uts"
+
+# Semua jenis
+curl -H "Authorization: Bearer $TOKEN_GURU" \
+  "https://momo-be-production.up.railway.app/api/v1/modul/3/soal/list"
+```
+
+**Response (200):**
+```json
+{
+  "jenis": "harian",
+  "jumlah": 3,
+  "data": [
+    {
+      "id": 5, "modul_id": 3, "jenis": "harian",
+      "pertanyaan": "Perhatikan gambar ayunan bandul...",
+      "pilihan_a": "2 sekon dan 0,5 Hz",
+      "pilihan_b": "3 sekon dan 1 Hz",
+      "pilihan_c": "4 sekon dan 2 Hz",
+      "pilihan_d": "5 sekon dan 3 Hz",
+      "created_at": "..."
+    }
+  ]
+}
+```
+⚠️ Tidak ada field `kunci_jawaban` di response.
+
+**Error (400 / 403):**
+```json
+{ "error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas" }
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+```
+
+---
+
+#### `POST /api/v1/modul/:id/soal/manual` — Buat soal manual
+
+**Path parameter:** `id` = ID modul.
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `jenis` | string | ✅ | `harian` / `uts` / `uas` |
+| `pertanyaan` | string | ✅ | |
+| `pilihan_a` | string | ✅ | |
+| `pilihan_b` | string | ✅ | |
+| `pilihan_c` | string | ✅ | |
+| `pilihan_d` | string | ✅ | |
+| `kunci_jawaban` | string | ✅ | `A` / `B` / `C` / `D` (case-insensitive) |
+
+```json
+{
+  "jenis": "harian",
+  "pertanyaan": "Siapakah presiden pertama Indonesia?",
+  "pilihan_a": "Soekarno",
+  "pilihan_b": "Soeharto",
+  "pilihan_c": "Habibie",
+  "pilihan_d": "Jokowi",
+  "kunci_jawaban": "A"
+}
+```
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/modul/3/soal/manual \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"jenis":"harian","pertanyaan":"Siapakah presiden pertama Indonesia?","pilihan_a":"Soekarno","pilihan_b":"Soeharto","pilihan_c":"Habibie","pilihan_d":"Jokowi","kunci_jawaban":"A"}'
+```
+
+**Response (201):**
+```json
+{
+  "message": "Soal berhasil ditambahkan",
+  "data": {
+    "id": 46, "modul_id": 3, "jenis": "harian",
+    "pertanyaan": "Siapakah presiden pertama Indonesia?",
+    "pilihan_a": "Soekarno", "pilihan_b": "Soeharto",
+    "pilihan_c": "Habibie", "pilihan_d": "Jokowi",
+    "created_at": "..."
+  }
+}
+```
+
+**Error (400 / 403):**
+```json
+{ "error": "Semua field (jenis, pertanyaan, pilihan A-D, kunci jawaban) wajib diisi" }
+{ "error": "jenis soal wajib salah satu dari: harian, uts, uas" }
+{ "error": "kunci jawaban wajib salah satu dari: A, B, C, atau D" }
+{ "error": "akses ditolak: modul tidak ditemukan atau bukan milik Anda" }
+```
+
+---
+
+#### `PUT /api/v1/soal/:id` — Update soal
+
+⚠️ Path parameter-nya `id` soal (bukan id modul). Validasi kepemilikan otomatis dilakukan (soal harus milik modul milik guru ini).
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `pertanyaan` | string | ✅ | |
+| `pilihan_a` | string | ✅ | |
+| `pilihan_b` | string | ✅ | |
+| `pilihan_c` | string | ✅ | |
+| `pilihan_d` | string | ✅ | |
+| `kunci_jawaban` | string | ✅ | `A` / `B` / `C` / `D` |
+| `jenis` | string | ❌ | `harian` / `uts` / `uas` (jika kosong → jenis tidak berubah) |
+
+```json
+{
+  "jenis": "uts",
+  "pertanyaan": "Siapakah presiden pertama Indonesia? (direvisi)",
+  "pilihan_a": "Soekarno",
+  "pilihan_b": "Mohammad Hatta",
+  "pilihan_c": "Sjahrir",
+  "pilihan_d": "Tan Malaka",
+  "kunci_jawaban": "A"
+}
+```
+
+**curl:**
+```bash
+curl -X PUT https://momo-be-production.up.railway.app/api/v1/soal/46 \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
+  -d '{"jenis":"uts","pertanyaan":"...(direvisi)","pilihan_a":"Soekarno","pilihan_b":"Mohammad Hatta","pilihan_c":"Sjahrir","pilihan_d":"Tan Malaka","kunci_jawaban":"A"}'
+```
+
+**Response (200):**
+```json
+{
+  "message": "Soal berhasil diperbarui",
+  "data": { "id": 46, "modul_id": 3, "jenis": "uts", "pertanyaan": "...(direvisi)", "pilihan_a": "...", ... }
+}
+```
+
+**Error (400):**
+```json
+{ "error": "Semua field (pertanyaan, pilihan A-D, kunci jawaban) wajib diisi" }
+{ "error": "akses ditolak: soal ini bukan milik Anda" }
+{ "error": "soal tidak ditemukan" }
+```
+
+---
+
+#### `DELETE /api/v1/soal/:id` — Hapus soal
+
+**curl:**
+```bash
+curl -X DELETE https://momo-be-production.up.railway.app/api/v1/soal/46 \
+  -H "Authorization: Bearer $TOKEN_GURU"
+```
+
+**Response (200):**
+```json
+{ "message": "Soal berhasil dihapus" }
+```
+
+**Error (400):**
+```json
+{ "error": "akses ditolak: soal ini bukan milik Anda" }
+{ "error": "soal tidak ditemukan" }
+```
+
 ## C. Kelas & Nilai (Token Guru)
 
 ### `POST /api/v1/kelas` — Buat kelas baru
