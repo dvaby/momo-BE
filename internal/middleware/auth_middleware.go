@@ -26,9 +26,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		tokenString := parts[1]
-
-		claims, err := jwtutil.VerifyToken(tokenString)
+		claims, err := jwtutil.VerifyToken(parts[1])
 		if err != nil {
 			errMsg := "Token siswa tidak valid. Silakan login kembali."
 			if strings.Contains(err.Error(), "expired") {
@@ -39,9 +37,18 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// PENJAGA ROLE: token guru tidak boleh masuk endpoint siswa
+		if claims.SiswaID == 0 {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Endpoint ini khusus siswa. Token Anda bukan token siswa.",
+				"code":  "TOKEN_WRONG_ROLE",
+			})
+			c.Abort()
+			return
+		}
+
 		c.Set("siswa_id", claims.SiswaID)
 		c.Set("kelas_id", claims.KelasID)
-
 		c.Next()
 	}
 }
@@ -63,9 +70,7 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		tokenString := parts[1]
-
-		claims, err := jwtutil.VerifyGuruToken(tokenString)
+		claims, err := jwtutil.VerifyGuruToken(parts[1])
 		if err != nil {
 			errMsg := "Token guru tidak valid. Silakan login kembali."
 			if strings.Contains(err.Error(), "expired") {
@@ -76,9 +81,18 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// PENJAGA ROLE: token siswa tidak boleh masuk endpoint guru
+		if claims.GuruID == 0 {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Endpoint ini khusus guru. Token Anda bukan token guru.",
+				"code":  "TOKEN_WRONG_ROLE",
+			})
+			c.Abort()
+			return
+		}
+
 		c.Set("guru_id", claims.GuruID)
 		c.Set("role", claims.Role)
-
 		c.Next()
 	}
 }
