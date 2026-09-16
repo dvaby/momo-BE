@@ -1,0 +1,4 @@
+ALUR BELAJAR SISWA
+
+siswa bilang aku siap belajar -> masuk ke study belajar -> Ai Bicara "klik kiri untuk mendengar klik kanan untuk menjawab, Kode kelas mu berapa?" -> saat klik kanan  siswa berbicara "kode kelas ku xxxxxx" -> Ai Memproses ->ai menjawab "Selamat datang di kelas xxxxxx(modul) kelas ini baru ada menyediakan materi/soal kamu ingin memilih yang mana?" -> siswa memilih soal-> ai bilang "soal yang ada hanya harian/uts/uas (kalo misalnya baru ada harian ya ai cuma bilang hanya ada harian begitu juga untuk lainya)" -> siswa memilih harian -> ai memproses -> ai membaca kan soalnya ,soal per soal -> siswa menjawab "aku rasa jawabnya b" ata tidak kalo dia ingin membaca ulang dia bilang "tolong bacakan ulang lagi" -> ai memproses jawabn - > ai bilang "oke sudah terpilih kamu mau lanjut soal selanjutnya kah?" -> siswa bilang "iya".
+nah selesai memilih langsung masuk ke pembelajaran seperti biasanya user dan ai saling berinterkasi

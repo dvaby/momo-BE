@@ -72,6 +72,10 @@ func SetupRouter(
 		{
 			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
+
+			//Endpoint siswa untuk belajar
+			siswaAuth.GET("/siswa/kelas-saya", siswaHandler.GetKelasSaya)
+			siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
 		}
 
 		guruAuth := api.Group("")

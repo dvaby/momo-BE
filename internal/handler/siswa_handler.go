@@ -83,3 +83,63 @@ func (h *SiswaHandler) JoinSiswa(c *gin.Context) {
 		Token:   token,
 	})
 }
+
+// GetKelasSaya — GET /api/v1/siswa/kelas-saya
+func (h *SiswaHandler) GetKelasSaya(c *gin.Context) {
+	siswaIDVal, exists := c.Get("siswa_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		return
+	}
+	siswaID := siswaIDVal.(uint)
+
+	kelasIDVal, exists := c.Get("kelas_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		return
+	}
+	kelasID := kelasIDVal.(uint)
+
+	result, err := h.service.GetKelasSaya(siswaID, kelasID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// GetMateriForSiswa — GET /api/v1/siswa/modul/:id/materi
+func (h *SiswaHandler) GetMateriForSiswa(c *gin.Context) {
+	siswaIDVal, exists := c.Get("siswa_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		return
+	}
+	siswaID := siswaIDVal.(uint)
+
+	kelasIDVal, exists := c.Get("kelas_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		return
+	}
+	kelasID := kelasIDVal.(uint)
+
+	modulIDParam := c.Param("id")
+	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		return
+	}
+
+	materiList, err := h.service.GetMateriForSiswa(siswaID, kelasID, uint(modulID))
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jumlah": len(materiList),
+		"data":   materiList,
+	})
+}

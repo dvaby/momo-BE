@@ -44,7 +44,7 @@ func main() {
 	soalHandler := handler.NewSoalHandler(soalService)
 
 	siswaRepo := repository.NewSiswaRepository(db)
-	siswaService := service.NewSiswaService(siswaRepo, kelasRepo)
+	siswaService := service.NewSiswaService(siswaRepo, kelasRepo, materiRepo, soalRepo)
 	siswaHandler := handler.NewSiswaHandler(siswaService)
 
 	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
