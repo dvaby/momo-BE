@@ -26,19 +26,18 @@ Acceptance criteria §8 adalah gerbang sebelum demo. Terima kasih!
 
 
 # MOMO — AI SERVICE ALIGNMENT PLAN
-**Versi:** 1.3 · **Tanggal:** 17 September 2026 · **Ditujukan untuk:** Tim AI Service / Konfigurasi LLM
+**Versi:** 1.6 · **Tanggal:** 17 September 2026 · **Ditujukan untuk:** Tim AI Service / Konfigurasi LLM
 **Status backend:** Production (`https://momo-be-production.up.railway.app`) · Demo lomba: **H-3 (20 Sept)**
-**Riwayat:** v1.0 (asumsi SD) → v1.1 (multi-jenjang, field jenjang eksplisit) → v1.2 (tanpa field jenjang; inferensi dari string konteks) → **v1.3 (tambah User Flow & Conversation Context)**
+**Riwayat:** v1.2 (inferensi jenjang dari `konteks`) → v1.3 (user flow & conversation context) → v1.4 (write-back callback + stream tunggal) → v1.5 (memori reasoning di AI Service) → **v1.6 (potong `pola_kelemahan` ke fase 2 karena deadline; memori sesi tetap sebagai fakta mentah)**
 
 ---
 
 ## 1. Konteks Produk
 
 - **Momo** adalah platform belajar online untuk **anak tuna netra jenjang SD, SMP, dan SMA** (usia ±6–18 tahun).
-- Satu platform multi-jenjang: dari penjumlahan (SD) sampai fisika, kimia, dan analisis teks (SMA).
 - Seluruh interaksi siswa berbasis **SUARA**: soal dibacakan Text-to-Speech (TTS), jawaban masuk sebagai teks bebas hasil Speech-to-Text (STT). Siswa tidak melihat layar.
 - Semua output LLM pada akhirnya **DIDENGAR**. Format visual (markdown, tabel, simbol) = racun.
-- **Tidak ada field jenjang terstruktur di backend.** Jenjang disimpulkan AI dari string `konteks` (§2.2).
+- Jenjang disimpulkan AI dari string `konteks` (§2.2) — tidak ada field jenjang terstruktur di backend.
 
 ---
 
@@ -51,210 +50,254 @@ Acceptance criteria §8 adalah gerbang sebelum demo. Terima kasih!
 4. **Pangkat & pecahan ucap-friendly:** "x²" → "x kuadrat" · "10³" → "sepuluh pangkat tiga" · "1/2" → "satu per dua".
 5. **Tanpa instruksi visual:** dilarang "perhatikan gambar di atas", "lihat tabel berikut".
 
-### 2.2 Inferensi jenjang dari string `konteks` (PENGGANTI field jenjang)
-Backend mengirim field `konteks` berisi penamaan yang sudah ada di sistem, contoh:
-- `/process`: `"Modul: Getaran dan Gelombang | Kelas tertaut: Kelas 11 IPA 2 (Fisika)"`
-- `/evaluate`: `"Kelas: Kelas 5 Matematika (Matematika) | Modul: Ipa"`
-
-AI WAJIB menyimpulkan jenjang dengan tabel berikut, lalu menyesuaikan gaya bahasa & kedalaman konsep:
+### 2.2 Inferensi jenjang dari string `konteks`
+AI menyimpulkan jenjang dari `konteks`, lalu menyesuaikan gaya & kedalaman:
 
 | Sinyal dalam `konteks` | Jenjang |
 |---|---|
-| Kelas 1–6, romawi I–VI, kata "satu"–"enam", "SD", "MI" | **SD** |
-| Kelas 7–9, romawi VII–IX, "SMP", "MTs" | **SMP** |
-| Kelas 10–12, romawi X–XII, "SMA", "MA", "SMK" | **SMA** |
-| Tidak ada sinyal sama sekali | **SMP** (default aman) |
+| Kelas 1–6, I–VI, "satu"–"enam", "SD", "MI" | **SD** |
+| Kelas 7–9, VII–IX, "SMP", "MTs" | **SMP** |
+| Kelas 10–12, X–XII, "SMA", "MA", "SMK" | **SMA** |
+| Tanpa sinyal | **SMP** (default aman) |
 
-Gaya per jenjang:
 | | **SD** | **SMP** | **SMA** |
 |---|---|---|---|
 | Panjang kalimat | ≤ 15 kata | ≤ 20 kata | ≤ 25 kata |
-| Kosakata | konkret, sehari-hari | istilah pelajaran + penjelasan singkat | istilah teknis kurikulum boleh langsung |
-| Analogi | wajib konkret | dianjurkan | opsional |
+| Kosakata | konkret, sehari-hari | istilah + penjelasan singkat | istilah teknis boleh langsung |
 | Nada | ramah menyemangati, "kamu" | ramah-menengah, "kamu" | muda-respektful, "kamu" |
 | Kedalaman | fakta & contoh | konsep & sebab-akibat | konsep, rumus verbal, penalaran |
 
-Aturan keras: **jangan pernah menebak SD untuk konten yang jelas SMA** (terdengar merendahkan). Jika sinyal konteks dan kompleksitas materi bertentangan, menangkan kompleksitas materi.
+Aturan keras: jangan menebak SD untuk konten yang jelas SMA. Jika sinyal konteks bertentangan dengan kompleksitas materi, menangkan kompleksitas materi.
 
 ---
 
-## 3. User Flow & Conversation Context (MENGAPA AI DIPANGGIL)
+## 3. User Flow & Conversation Context
 
-### 3.1 Alur Belajar Siswa (End-to-End)
+### 3.1 Alur Belajar (End-to-End, arsitektur v1.4+)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ 1. SISWA BUKA APP                                                    │
-│    🔊 AI: "Halo, apakah kamu siap belajar?"                         │
-│    🎤 Siswa: "Ya, saya siap"                                        │
-│                                                                      │
-│ 2. AI PANDU JOIN KELAS                                               │
-│    🔊 AI: "Siapa nama kamu?"                                        │
-│    🎤 Siswa: "Budi"                                                 │
-│    🔊 AI: "Kode kelas mu berapa?"                                   │
-│    🎤 Siswa: "Kode kelas ku 487137"                                 │
-│    [FE panggil POST /join → auto-register siswa]                    │
-│                                                                      │
-│ 3. AI INFO KELAS & MODUL                                             │
-│    [FE panggil GET /siswa/kelas-saya]                               │
-│    🔊 AI: "Selamat datang di kelas Matematika 5A! Kelas ini        │
-│            menyediakan soal harian dan UTS. Mau mulai dari mana?"  │
-│    🎤 Siswa: "Soal"                                                 │
-│                                                                      │
-│ 4. AI PILIH JENIS SOAL                                               │
-│    🔊 AI: "Soal yang tersedia hanya harian dan UTS. Pilih yang mana?"│
-│    🎤 Siswa: "Harian"                                               │
-│    [FE panggil GET /modul/:id/soal?jenis=harian]                    │
-│                                                                      │
-│ 5. SESI SOAL (LOOP)                                                  │
-│    🔊 AI: "Soal nomor 1. [bacakan pertanyaan + 4 pilihan]"         │
-│    🎤 Siswa: "Aku rasa jawabannya B"                                │
-│    [FE panggil POST /evaluate → dapat feedback]                     │
-│    🔊 AI: "[bacakan feedback dari AI Service]"                      │
-│    🔊 AI: "Mau lanjut soal berikutnya?"                             │
-│    🎤 Siswa: "Ya" (atau "Bacakan ulang soal sebelumnya")           │
-│    [Loop sampai semua soal selesai]                                 │
-│                                                                      │
-│ 6. MODE TUTOR (OPSIONAL, FASE 2)                                    │
-│    🔊 AI: "Semua soal selesai. Mau diskusi lebih lanjut?"           │
-│    🎤 Siswa: "Iya, aku masih bingung soal nomor 3"                 │
-│    [FE panggil POST /tutor dengan riwayat jawaban]                  │
-│    🔊 AI: "[balasan AI Service]"                                    │
-│    [Percakapan bebas sampai siswa puas]                             │
-│                                                                      │
-│ 7. MODE BELAJAR MATERI (ALTERNATIF LANGKAH 4)                        │
-│    🎤 Siswa: "Materi" (bukan "Soal")                                │
-│    [FE panggil GET /siswa/modul/:id/materi]                         │
-│    🔊 AI: "Bab 1: [judul]. [bacakan konten]"                       │
-│    🎤 Siswa: "Bacakan ulang bagian ini" / "Lanjut bab berikutnya" │
-│    [Loop sampai semua materi selesai]                               │
-└─────────────────────────────────────────────────────────────────────┘
+1. SISWA BUKA APP
+   🔊 "Halo, apakah kamu siap belajar?"  →  🎤 "Ya"
+2. PANDU JOIN
+   🔊 "Siapa nama kamu?" → 🎤 "Budi" → 🔊 "Kode kelas mu berapa?" → 🎤 "487137"
+   [FE: POST /join → auto-register + token]
+3. BUKA SATU STREAM
+   [FE: GET /api/v1/stream  ← SATU-SATUNYA koneksi update; dibuka sekali, dipertahankan]
+4. INFO KELAS
+   [FE: GET /siswa/kelas-saya]
+   🔊 "Selamat datang di Kelas 5 Matematika! Kelas ini menyediakan soal harian dan UTS."
+5. UPLOAD/GENERATE (alur guru) — ASYNC + STREAM
+   [FE guru: POST /modul/:id/materi atau /soal  → ack {job_id} dalam <1 detik]
+   [AI proses → callback ke backend → backend simpan → SSE event]
+   [FE guru menerima event `materi-ready` / `soal-ready` di stream → render. TANPA polling.]
+6. SESI SOAL (LOOP) — SYNC per soal
+   🔊 bacakan soal+opsi → 🎤 "aku rasa jawabannya be"
+   [FE: POST /submit-jawaban → backend tunggu callback AI → response sync berisi feedback]
+   🔊 bacakan feedback → 🔊 "Mau lanjut soal berikutnya?" → 🎤 "ya"
+7. MODE TUTOR (fase 2) — ASYNC + STREAM
+   [FE: POST /tutor → ack] → [AI callback → backend emit event `tutor-reply`]
+   🔊 bacakan balasan tutor dari stream
+8. MODE MATERI
+   [FE: GET /siswa/modul/:id/materi] → 🔊 bacakan per bab → 🎤 "bacakan ulang bagian ini"
 ```
 
-### 3.2 Kapan Endpoint AI Dipanggil
+### 3.2 Kapan Endpoint AI Dipanggil & Jalur Hasilnya
 
-| Endpoint | Dipanggil Saat | Frekuensi |
+| Endpoint AI | Pemicu | Jalur hasil ke FE |
 |---|---|---|
-| `/process` tipe materi | Guru upload PDF materi | 1x per PDF |
-| `/process` tipe soal | Guru upload PDF soal | 1x per PDF |
-| `/evaluate` | Siswa submit jawaban (langkah 5) | 1x per soal per siswa |
-| `/tutor` | Siswa masuk mode diskusi (langkah 6) | Banyak kali per sesi |
+| `/process` materi | Guru upload PDF | **Stream event** `materi-ready` / `materi-failed` |
+| `/process` soal | Guru upload PDF | **Stream event** `soal-ready` / `soal-failed` |
+| `/evaluate` | Siswa submit jawaban | **Sync response** POST /submit-jawaban (backend menunggu callback AI) |
+| `/tutor` | Siswa chat diskusi | **Stream event** `tutor-reply` |
 
 ### 3.3 Implikasi untuk Output AI
-
-**`/evaluate` feedback (langkah 5):**
-- Siswa **mendengarkan** feedback, lalu langsung lanjut ke soal berikutnya.
-- Feedback harus **singkat & to-the-point** (maks 3 kalimat = ±10–15 detik baca TTS).
-- Jangan bertele-tele atau kasih penjelasan panjang — siswa kehilangan fokus.
-- Contoh BAD: "Jawabanmu kurang tepat. Mari kita analisis bersama. Pertama, perhatikan bahwa... Kedua, kita perlu... Ketiga, kesimpulannya..."
-- Contoh GOOD: "Belum tepat. Ingat ya, pengeluaran mengurangi saldo dan pemasukan menambahnya. Coba perhatikan lagi."
-
-**`/tutor` balasan (langkah 6):**
-- Mode diskusi bebas, siswa mungkin tanya berkali-kali.
-- Balasan boleh lebih panjang (maks 4 kalimat), tapi tetap **conversation-friendly**.
-- Jangan monolog — akhiri dengan pertanyaan balik atau ajakan lanjut.
-- Contoh GOOD: "Rumus kecepatan itu jarak dibagi waktu. Jadi kalau kamu tahu jarak 100 meter dan waktu 20 detik, tinggal bagi saja. Mau coba hitung sekarang?"
-
-**`/process` materi (langkah 7):**
-- Siswa dengar per bab, bisa minta "bacakan ulang" kapan saja.
-- Konten per bab **tidak boleh terlalu panjang** (siswa lupa awal kalimat kalau terlalu lama).
-- Pecah bab panjang jadi sub-item (lihat §4.1).
+- Feedback `/evaluate`: maks 3 kalimat (±10–15 detik TTS); siswa langsung lanjut soal berikutnya. Jangan bertele-tele.
+- Balasan `/tutor`: maks 4 kalimat, conversation-friendly, akhiri dengan pertanyaan balik.
+- Konten `/process` materi: per bab tidak terlalu panjang (siswa bisa minta "bacakan ulang" kapan saja).
 
 ---
 
-## 4. Peta Endpoint & Kontrak JSON (SUMBER KEBENARAN = BACKEND GO)
+## 4. Arsitektur Write-Back & Stream Tunggal
 
-Response WAJIB JSON murni — tanpa markdown fence, tanpa teks di luar JSON. Field tak dikenal diabaikan backend; field wajib hilang = gagal proses.
+### 4.1 Dataflow (+ memori)
 
-### 4.1 `POST /process` — tipe = `"materi"`
-**Request:**
+```
+FE ── upload/aksi ──> BACKEND ── ack {job_id} ──> FE
+                       │ job {job_id, callback_url, session_id?, payload, konteks}
+                       ▼
+                  AI SERVICE ── baca/tulis MEMORI SESI (per session_id)
+                       │ callback {job_id, status, hasil} + X-AI-Internal-Token
+                       ▼
+                  BACKEND: (1) simpan DB (satu-satunya writer bisnis)
+                           (2) emit SSE event ──> FE (1 stream)
+```
+
+**Aturan emas:**
+1. **AI Service TIDAK BOLEH menulis ke database langsung** (tidak ada koneksi DB dari AI). Penyimpanan hanya via callback ke backend.
+2. **Backend adalah satu-satunya writer ke DB** dan satu-satunya sumber event ke FE.
+3. **FE membuka SATU koneksi stream** setelah login untuk SEMUA update async. Tidak ada polling status proses sama sekali. REST biasa hanya untuk: bootstrap data awal, aksi CRUD, dan `POST /submit-jawaban` (sync).
+
+### 4.2 Kontrak Job & Ack (Backend → AI)
+
+Setiap request ke AI membawa identitas job:
 ```json
 {
-  "tipe": "materi",
-  "teks_mentah": "<seluruh teks hasil ekstraksi PDF>",
-  "konteks": "Modul: Ipa | Kelas tertaut: Kelas 5 Matematika (Matematika)"
+  "job_id": "job_20260917_0001",
+  "callback_url": "https://momo-be-production.up.railway.app/api/v1/internal/ai-callback",
+  "tipe": "materi | soal",
+  "teks_mentah": "...",
+  "konteks": "Modul: Fisika | Kelas tertaut: Kelas 11 IPA 2 (Fisika)"
 }
 ```
-**Response WAJIB:**
+**Response AI WAJIB ack cepat (< 1 detik), BUKAN hasil:**
 ```json
+{ "accepted": true, "job_id": "job_20260917_0001" }
+```
+Seluruh hasil dikirim terpisah via callback (§4.3).
+
+### 4.3 Kontrak Callback (AI → Backend)
+
+```
+POST {callback_url}
+Headers:
+  Content-Type: application/json
+  X-AI-Internal-Token: <shared secret, disepakati via env kedua sisi>
+Body (sukses):
 {
-  "success": true,
-  "message": "",
-  "data": { "materi": [ { "urutan": 1, "judul": "...", "konten": "<narasi sesuai jenjang terinferensi>" } ] }
+  "job_id": "job_20260917_0001",
+  "tipe": "materi | soal | evaluate | tutor",
+  "status": "success",
+  "hasil": { ...bentuk data sama seperti kontrak v1.3... }
+}
+Body (gagal):
+{
+  "job_id": "job_20260917_0001",
+  "tipe": "soal",
+  "status": "failed",
+  "error_message": "teks tidak mengandung soal pilihan ganda"
 }
 ```
 
-### 4.2 `POST /process` — tipe = `"soal"`
-**Request:**
-```json
-{ "tipe": "soal", "teks_mentah": "<teks ekstraksi PDF>", "konteks": "Modul: Fisika | Kelas tertaut: Kelas 11 IPA 2 (Fisika)" }
-```
-**Response WAJIB:**
-```json
-{
-  "success": true,
-  "message": "",
-  "data": {
-    "soal": [
-      { "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...", "kunci_jawaban": "A|B|C|D" }
-    ]
-  }
-}
-```
+**Aturan keandalan:**
+- Callback dipanggil **tepat sekali** per `job_id` (best-effort). Retry maks 3× (backoff 2/4/8 detik) hanya jika backend membalas 5xx.
+- Backend **idempotent**: callback duplikat dengan `job_id` sama diabaikan aman.
+- Callback tanpa token / token salah → backend tolak 401; AI jangan retry tanpa token benar.
+- Jika AI tidak pernah callback, backend menandai job failed setelah timeout: materi/soal 150 detik · evaluate 30 detik · tutor 20 detik, lalu emit event failed / balas error sync.
 
-### 4.3 `POST /evaluate` — menilai jawaban suara siswa
-**Request:**
-```json
-{
-  "pertanyaan": "...",
-  "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...",
-  "kunci_jawaban": "A|B|C|D",
-  "jawaban_mentah": "<teks bebas hasil STT>",
-  "konteks": "Kelas: Kelas 5 Matematika (Matematika) | Modul: Ipa"
-}
-```
-**Response WAJIB:**
-```json
-{ "jawaban_terdeteksi": "A|B|C|D|\"\"", "benar": true|false, "feedback": "<audio-first, gaya jenjang terinferensi>", "perlu_klarifikasi": false }
-```
-`perlu_klarifikasi` opsional: `true` + `jawaban_terdeteksi: ""` bila ucapan tak terpetakan ke opsi mana pun.
+### 4.4 Katalog Event Stream (Backend → FE)
 
-### 4.4 `POST /tutor` — USULAN FASE 2 (chat pemandu belajar)
-Belum ada di backend; route proxy menyusul setelah AI siap. Request: `{ materi_aktif, riwayat_jawaban, pesan_siswa, konteks }`. Response: `{ "balasan": "<maks 4 kalimat, audio-first, gaya jenjang>" }`. Tidak pernah menyebut huruf kunci; pertanyaan di luar materi diarahkan kembali dengan ramah.
+`GET /api/v1/stream` — role-aware (token guru atau siswa), menggantikan `/kelas/stream` (lama tetap hidup sampai FE migrasi, lalu deprecated).
+
+| Event | Payload | Pemicu |
+|---|---|---|
+| `connected` | `{message, time}` | stream dibuka |
+| `kelas-created` / `kelas-updated` / `kelas-deleted` | object kelas / `{id}` | CRUD kelas (existing) |
+| `materi-ready` | `{job_id, modul_id, jumlah, data[]}` | callback materi success |
+| `materi-failed` | `{job_id, modul_id, error}` | callback materi failed / timeout |
+| `soal-ready` | `{job_id, modul_id, jenis, jumlah, data[]}` | callback soal success |
+| `soal-failed` | `{job_id, modul_id, jenis, error}` | callback soal failed / timeout |
+| `tutor-reply` | `{session_id, balasan}` | callback tutor success |
+| `tutor-failed` | `{session_id, error}` | callback tutor failed |
+| `: heartbeat` | komentar kosong | tiap ±15 detik |
+
+Catatan: **tidak ada event untuk `/evaluate`** — hasilnya dikirim sync via response `POST /submit-jawaban` (latensi percakapan suara).
+
+### 4.5 Prinsip untuk FE
+- Setelah login: buka & pertahankan SATU `GET /api/v1/stream`; reconnect dengan backoff jika putus.
+- Upload PDF: kirim → terima ack `{job_id}` → tampilkan spinner → render saat event `*-ready` tiba; tampilkan pesan `error` saat event `*-failed` tiba.
+- Hapus SEMUA polling status proses dan SEMUA long-wait synchronous upload.
+- `POST /submit-jawaban` tetap request-response biasa (feedback datang di response-nya).
 
 ---
 
-## 5. Spesifikasi Perilaku per Endpoint
+## 5. Memori Reasoning di AI Service
 
-### 5.1 `/process` tipe materi
-- Pecah menjadi bab/sub-bab berurutan (`urutan` mulai 1).
-- Panjang konten per item sesuai jenjang terinferensi: SD 80–150 kata · SMP 100–200 kata · SMA 150–250 kata. Item lebih panjang WAJIB dipecah (satu item = satu kali tekan "bacakan ulang").
-- Narasi murni (§2). Tabel/diagram dikonversi ke kalimat; lewati bila tak bisa dinarasikan.
-- Kedalaman sesuai jenjang: SD contoh konkret; SMA boleh rumus verbal ("kecepatan sama dengan jarak dibagi waktu").
-- PDF berisi SOAL bukan materi → `success: false` + `message`.
+### 5.1 Prinsip pembagian penyimpanan
+- **AI Service menyimpan memori reasoning**: state sesi belajar yang dibutuhkan untuk beralasan lintas interaksi (posisi baca, soal yang sudah dibacakan, riwayat jawaban, chat tutor).
+- **Backend menyimpan data bisnis** (nilai, jawaban, materi, soal) via callback write-back. Memori AI **bukan** sumber kebenaran bisnis dan **bukan** pengganti write-back.
+- Memori AI boleh hilang kapan pun tanpa merusak produk: backend selalu mengirim **bootstrap konteks minimum** di setiap request sebagai ground truth; AI merge dengan memorinya bila ada.
 
-### 5.2 `/process` tipe soal
-- **Ekstrak SEMUA soal valid, minimal 10, maksimal 20 per request.** ⚠️ Perilaku saat ini ±2 soal per PDF — **blocker demo.**
-- Hanya pilihan ganda lengkap (4 opsi + kunci pasti). Essay/isian → lewati.
-- Soal bergantung gambar: narasikan maks 2 kalimat bila mungkin; lewati bila gambar teknis rumit.
-- Normalisasi TTS-safe (§2) tanpa mengubah substansi angka/konsep.
-- **Pertahankan tingkat kesulitan asli.** Yang disesuaikan kejelasan kalimat, bukan kedalaman konsep — soal SMA tidak boleh "dikecilkan" jadi bahasa SD.
-- `kunci_jawaban` WAJIB A/B/C/D pasti; tidak pasti → buang soal.
+### 5.2 Keying
+- Key memori: `session_id` opaque buatan backend (bukan nama/ID pribadi siswa).
+- Satu sesi = satu rangkaian belajar siswa (sesi soal + tutor lanjutan + navigasi materi).
+- Job satu-shot guru (`/process`) tidak memakai session_id; cukup `job_id`.
 
-### 5.3 `/evaluate`
-**Deteksi jawaban (normalisasi STT §6):** prioritas 1 huruf/fonetik ("be", "ce", "de", "ha"); prioritas 2 substansi isi opsi (cocok semantik, termasuk istilah teknis); prioritas 3 tak ada sinyal → `perlu_klarifikasi: true`. Dua huruf disebut → ambil pilihan final.
-**Feedback (maks 3 kalimat, gaya jenjang terinferensi):**
-- Benar: konfirmasi + SATU kalimat penguatan konsep.
-  - SD: "Betul! Saldo akhir Dika memang berkurang tujuh belas ribu rupiah karena pengeluaran lebih besar dari pemasukan."
-  - SMA: "Tepat. Resultan gaya nol berarti benda setimbang, sesuai hukum pertama Newton."
-- Salah: JANGAN sebut huruf kunci; jelaskan substansi jawaban benar + kalimat semangat.
-- Perlu klarifikasi: "Maaf, aku belum menangkap jawabanmu. Sebutkan huruf a, be, ce, atau de, atau bacakan isi jawaban yang kamu pilih ya."
+### 5.3 Isi memori per session_id (bentuk v1.6 — fakta mentah saja)
+```json
+{
+  "session_id": "sess_8f3a",
+  "jenjang": "smp",
+  "modul_aktif": { "id": 3, "nama": "Ipa" },
+  "posisi_materi": { "urutan": 4, "judul": "Bab 2 Kegiatan Ekonomi" },
+  "soal_dibacakan": [5, 6],
+  "riwayat_jawaban": [
+    { "soal_id": 5, "jawaban_terdeteksi": "B", "benar": false }
+  ],
+  "chat_tutor": [ { "role": "siswa", "teks": "..." }, { "role": "ai", "teks": "..." } ]
+}
+```
+> ⚠️ Field `pola_kelemahan` **DIPOTONG KE FASE 2** (keputusan deadline 17 Sept). Memori hanya menyimpan fakta sesi mentah; tidak ada agregasi atau analisis kelemahan siswa.
 
-### 5.4 `/tutor` (fase 2): lihat §4.4; petunjuk bertahap, bukan huruf kunci.
+### 5.4 Lifecycle
+- **Create:** backend mengirim `session_id` + bootstrap pertama kali pada `/evaluate` atau `/tutor`.
+- **Update:** AI memperbarui memori setelah setiap interaksi dalam sesi.
+- **Rehydrate:** jika `session_id` tidak dikenal (restart/expiry), AI bangun memori baru dari `bootstrap` request — jangan gagal, jangan hallucinate riwayat.
+- **Expiry:** TTL 24 jam sejak interaksi terakhir, lalu hapus permanen. Sesi hari berikutnya = rehydrate dari DB backend.
+
+### 5.5 Yang TIDAK boleh masuk memori AI
+- Nama asli siswa, token, atau data pribadi lain.
+- `kunci_jawaban` dalam bentuk yang bisa bocor ke feedback siswa.
+- Teks buku lengkap — simpan ringkasan/pointer materi aktif saja.
+- Apa pun yang bernilai jangka panjang → wajib sudah di-write-back ke backend dulu.
+
+### 5.6 Konsekuensi perilaku
+- Feedback & balasan tutor **BOLEH (opsional, tidak wajib)** merujuk fakta sesi sederhana seperlunya — misal "soal sebelumnya juga tentang siklus air" — tanpa agregasi pola apa pun.
+- Write-back tetap wajib untuk setiap jawaban & feedback (§4.3), terlepas dari memori.
 
 ---
 
-## 6. Robustness Input STT
+## 6. Kontrak Endpoint AI
+
+### 6.1 `POST /process` (tipe materi | soal)
+Request: `{ job_id, callback_url, tipe, teks_mentah, konteks }` → ack `{accepted, job_id}`.
+Hasil via callback: `hasil.data.materi[]` atau `hasil.data.soal[]` (bentuk field sama seperti v1.3).
+
+### 6.2 `POST /evaluate`
+Request:
+```json
+{
+  "job_id": "...", "callback_url": "...",
+  "session_id": "sess_8f3a",
+  "bootstrap": {
+    "riwayat_terakhir": [ { "soal_id": 5, "benar": false } ],
+    "materi_aktif": { "judul": "...", "ringkasan": "..." }
+  },
+  "pertanyaan": "...", "pilihan_a": "...", "pilihan_b": "...", "pilihan_c": "...", "pilihan_d": "...",
+  "kunci_jawaban": "B",
+  "jawaban_mentah": "<teks STT>",
+  "konteks": "Kelas: Kelas 8 IPA 2 (IPA) | Modul: Getaran"
+}
+```
+→ ack. Hasil callback: `{ jawaban_terdeteksi, benar, feedback, perlu_klarifikasi }`.
+Backend menunggu callback maks 30 detik → teruskan sebagai response sync `POST /submit-jawaban` ke FE.
+
+### 6.3 `POST /tutor` (fase 2)
+Request: `{ job_id, callback_url, session_id, bootstrap, pesan_siswa, konteks }` → ack.
+Hasil callback: `{ balasan }` → backend emit event `tutor-reply`.
+AI TIDAK perlu dikirim riwayat chat lengkap — ambil dari memori session_id; `bootstrap` hanya fallback.
+
+---
+
+## 7. Spesifikasi Perilaku LLM
+
+- **Materi:** bab berurutan (`urutan` mulai 1); panjang per item SD 80–150 / SMP 100–200 / SMA 150–250 kata; narasi murni; tabel/diagram dikonversi ke kalimat; PDF berisi soal → `status: failed` dengan `error_message`.
+- **Soal:** ekstrak SEMUA soal valid, **minimal 10, maksimal 20 per request** (⚠️ perilaku saat ini ±2 — **blocker demo**); lewati essay & soal gambar rumit (gambar sederhana boleh dinarasikan maks 2 kalimat); pertahankan tingkat kesulitan asli; kunci wajib pasti A–D, tidak pasti → buang soal.
+- **Evaluate:** normalisasi STT → deteksi huruf/substansi → feedback maks 3 kalimat; jawaban salah JANGAN sebut huruf kunci, jelaskan substansi jawaban benar; tak terpetakan → `perlu_klarifikasi: true`. Tanpa personalisasi agregat (fase 2).
+- **Tutor:** petunjuk bertahap, bukan huruf kunci; akhiri dengan pertanyaan balik; boleh merujuk fakta sesi sederhana.
+
+---
+
+## 8. Robustness Input STT
 
 1. Buang filler: "ehm", "mm", "menurut saya", "kayaknya", "deh", "dong", "ya".
 2. Lowercase, buang tanda baca.
@@ -267,65 +310,80 @@ Belum ada di backend; route proxy menyusul setelah AI siap. Request: `{ materi_a
 - SMP: "jawabannya ce karena saldo berkurang"→C · "b dan c mirip tapi saya pilih b"→B
 - SMA: "yang percepatan gravitasi sembilan koma delapan meter per sekon kuadrat"→substansi · "rumus v sama dengan lambda kali f"→substansi
 - Klarifikasi: "saya tidak tahu"→perlu_klarifikasi · "yang terakhir" (ambigu)→perlu_klarifikasi
+
 **Target akurasi deteksi huruf ≥ 95% per jenjang.**
 
 ---
 
-## 7. Performa & Batas
+## 9. Performa & Batas
 
-| Endpoint | Target | Batas keras |
+| Tahap | Target | Batas keras |
 |---|---|---|
-| `/evaluate` | p50 < 5 dtk, p95 < 10 dtk | 30 dtk |
-| `/process` | < 60 dtk | 120 dtk (timeout backend) |
-| `/tutor` | p50 < 4 dtk | 15 dtk |
+| Ack AI (`accepted`) | < 1 detik | 3 detik |
+| Callback AI → backend (evaluate) | p50 < 5 dtk, p95 < 10 dtk | 30 dtk |
+| Callback AI → backend (process) | < 60 dtk | 150 dtk (timeout job backend) |
+| Callback AI → backend (tutor) | p50 < 4 dtk | 20 dtk |
+| Event stream → FE setelah callback diterima | < 2 detik | 5 detik |
 
-Teks panjang → chunking internal. `/process` > 100 dtk → hasil partial `success: true` daripada timeout. `/evaluate` pakai model cepat.
-
----
-
-## 8. Keamanan & Privasi
-
-1. Stateless per request: jangan persisten teks buku, jawaban siswa, riwayat chat.
-2. Feedback salah tidak membocorkan huruf kunci.
-3. `/process` soal boleh memuat `kunci_jawaban` (hanya backend yang melihat).
-4. Data pribadi siswa tidak masuk prompt/log pihak ketiga.
+Teks panjang → chunking internal. Job process > 100 detik → kirim hasil partial `status: success` daripada timeout.
 
 ---
 
-## 9. Acceptance Criteria
+## 10. Keamanan, Privasi & Retensi Memori
 
-1. ✅ JSON valid 100% pada 50 sample acak.
-2. ✅ Nol karakter terlarang §2 pada field yang sampai ke siswa.
-3. ✅ `/process` soal ≥ 10 soal dari PDF kumpulan 15–40 halaman (**blocker demo**).
-4. ✅ Akurasi deteksi huruf ≥ 95% per jenjang pada set kasus §6.
-5. ✅ Feedback salah tidak mengandung huruf kunci.
-6. ✅ **Inferensi jenjang benar pada 20 sample nama kelas nyata** (format angka, romawi, kata: "Kelas 11 IPA 2", "Kelas VII B", "kelas lima", "XII IPA 3") — review manual gaya bahasa per jenjang, nol sample SMA bergaya SD dan sebaliknya.
-7. ✅ **Feedback `/evaluate` singkat & conversation-friendly** (≤15 detik baca TTS, tidak bertele-tele).
-8. ✅ Latensi sesuai §7 pada 20 request beruntun.
-9. ✅ `perlu_klarifikasi` tidak pernah menghasilkan huruf acak.
+1. Memori AI berisi hanya data reasoning (§5.3); dilarang data pribadi & kunci jawaban bocor (§5.5).
+2. Memori TTL 24 jam, hapus permanen setelahnya; write-back ke backend terjadi SEBELUM data dibutuhkan jangka panjang.
+3. Callback wajib `X-AI-Internal-Token`; backend menolak 401 jika token salah.
+4. AI tidak koneksi ke database backend dalam bentuk apa pun.
+5. Feedback salah tidak membocorkan huruf kunci.
 
 ---
 
-## 10. Checklist Implementasi
+## 11. Acceptance Criteria
 
-- [ ] Terima field `konteks` di semua endpoint; inferensi jenjang sesuai tabel §2.2; default SMP bila tanpa sinyal
-- [ ] System prompt `/process` materi: TTS-safe + panjang konten per jenjang + pemecahan sub-bab
-- [ ] System prompt `/process` soal: limit 10–20, soal gambar, validasi kunci, pertahankan tingkat kesulitan asli
-- [ ] System prompt `/evaluate`: normalisasi STT §6, prioritas deteksi §5.3, gaya feedback per jenjang, **singkat & to-the-point** (lihat §3.3)
-- [ ] Field opsional `perlu_klarifikasi`
-- [ ] Validator JSON output (retry sekali)
-- [ ] Set kasus uji per jenjang + 20 sample inferensi nama kelas + load test latensi
-- [ ] Endpoint `/tutor` (fase 2)
-- [ ] Deploy ke environment production backend
+1. ✅ JSON valid 100% (ack, callback, dan seluruh payload).
+2. ✅ Nol karakter terlarang §2.1 pada field yang sampai ke siswa.
+3. ✅ `/process` soal ≥ 10 soal per PDF kumpulan 15–40 halaman (**blocker demo**).
+4. ✅ Akurasi deteksi huruf ≥ 95% per jenjang pada set kasus §8.
+5. ✅ Feedback salah tanpa huruf kunci; feedback ≤ 3 kalimat.
+6. ✅ Inferensi jenjang benar pada 20 sample nama kelas nyata (format angka, romawi, kata).
+7. ✅ Callback tepat sekali per job_id pada 50 job uji (termasuk simulasi retry 5xx).
+8. ✅ Ack < 1 detik pada 100% request; event stream tiba di FE < 2 detik setelah callback.
+9. ✅ **Memori lintas request:** pada uji tutor 5 interaksi, AI mampu merujuk fakta interaksi ke-2 dengan benar (misal soal/konsep yang sudah dibahas).
+10. ✅ **Rehydrate:** setelah memori dihapus manual, request berikut tetap koheren via bootstrap (tidak hallucinate riwayat).
+11. ✅ **Expiry:** memori lenyap setelah TTL 24 jam.
+12. ✅ Job gagal menghasilkan callback `status: failed` dengan `error_message` informatif (bukan hang).
 
-**Koordinasi lintas tim:**
-- Backend: mulai mengirim `konteks` (rakitan nama kelas + mata pelajaran + nama modul dari data existing — tanpa kolom baru).
-- FE guru: tambah placeholder hint di form buat kelas/modul: "Contoh: Kelas 11 IPA 2" (teks saja, bukan struktur) — memperbaiki kualitas inferensi jangka panjang.
+---
+
+## 12. Checklist Implementasi
+
+**Tim AI:**
+- [ ] Terima `job_id` + `callback_url`; balas ack < 1 detik; hasil hanya via callback
+- [ ] Implement callback dengan `X-AI-Internal-Token` + retry 3× backoff
+- [ ] Memori sesi per `session_id` (§5): create/update/rehydrate/expiry — **fakta sesi mentah saja, TANPA agregasi pola kelemahan (fase 2)**
+- [ ] Seluruh perilaku §7, robustness §8, prompt Lampiran B
+- [ ] Load test latensi §9 + uji memori §11.9–11.11
+
+**Tim Backend (menyusul dokumen ini):**
+- [ ] Endpoint `POST /api/v1/internal/ai-callback` (validasi token, idempotent by job_id)
+- [ ] Unified stream `GET /api/v1/stream` role-aware + katalog event §4.4
+- [ ] Upload materi/soal → async ack + kirim job ke AI (bawa `job_id` + `callback_url`)
+- [ ] `/submit-jawaban` → sync-via-callback (tunggu 30 detik) + kirim `session_id` & `bootstrap`
+- [ ] `/tutor` route + emit `tutor-reply` (fase 2)
+
+**Tim FE:**
+- [ ] Buka satu stream setelah login; hapus polling & long-wait upload
+- [ ] Render dari event `*-ready` / `*-failed` / `tutor-reply`
+- [ ] Placeholder hint penamaan kelas: "Contoh: Kelas 11 IPA 2"
 
 ---
 
 ## Lampiran A — Konvensi Pembacaan Huruf (AI + FE)
-TTS membaca huruf opsi: A→"a" · B→"be" · C→"ce" · D→"de". AI memakai peta homofon SAMA (§6.3) saat memetakan ucapan siswa kembali ke huruf.
+
+TTS membaca huruf opsi: A→"a" · B→"be" · C→"ce" · D→"de". AI memakai peta homofon sama (§8 poin 3) saat memetakan ucapan siswa kembali ke huruf. Konsistensi dua arah ini kunci akurasi deteksi.
+
+---
 
 ## Lampiran B — Kerangka System Prompt Siap Pakai
 
@@ -334,7 +392,7 @@ TTS membaca huruf opsi: A→"a" · B→"be" · C→"ce" · D→"de". AI memakai 
 Kamu adalah penilai jawaban untuk siswa tuna netra Indonesia jenjang SD sampai SMA.
 Outputmu akan dibacakan text-to-speech ke siswa yang TIDAK MELIHAT LAYAR, lalu siswa akan lanjut ke soal berikutnya. Jadi feedback harus SINGKAT & TO-THE-POINT (maks 3 kalimat = ±10-15 detik baca).
 
-Input: pertanyaan pilihan ganda, empat opsi, kunci jawaban, ucapan siswa hasil transkripsi suara yang berantakan, dan string konteks berisi nama kelas, mata pelajaran, dan nama modul.
+Input: pertanyaan pilihan ganda, empat opsi, kunci jawaban, ucapan siswa hasil transkripsi suara yang berantakan, string konteks (nama kelas, mata pelajaran, nama modul), session_id, dan bootstrap riwayat singkat.
 
 Tugas:
 1. Simpulkan jenjang dari konteks (kelas 1-6/I-VI/SD/MI→sd; 7-9/VII-IX/SMP/MTs→smp; 10-12/X-XII/SMA/MA/SMK→sma; tanpa sinyal→smp; jika sinyal bertentangan dengan kompleksitas materi, menangkan kompleksitas materi).
@@ -346,7 +404,8 @@ Aturan keras:
 - Jawaban salah JANGAN disebut huruf kuncinya, jelaskan substansi jawaban benar.
 - Jawaban benar dikonfirmasi plus satu kalimat penguatan konsep.
 - Ucapan tak terpetakan → perlu_klarifikasi true dan minta ulang dengan ramah.
-- JANGAN bertele-tele atau kasih penjelasan panjang — siswa kehilangan fokus.
+- JANGAN bertele-tele — siswa kehilangan fokus.
+- Jika memori sesi tersedia, kamu BOLEH menyebut fakta sesi sederhana seperlunya (misal konsep yang juga muncul di soal sebelumnya). Ini opsional, bukan kewajiban. Jangan pernah menyebut huruf kunci saat jawaban salah.
 
 Output HANYA JSON: {"jawaban_terdeteksi":"...","benar":...,"feedback":"...","perlu_klarifikasi":...}
 ```
@@ -381,7 +440,8 @@ Output HANYA JSON: {"success":true,"message":"","data":{"materi":[{"urutan":...,
 Kamu adalah tutor diskusi untuk siswa tuna netra Indonesia jenjang SD sampai SMA.
 Siswa sudah selesai mengerjakan soal dan masuk mode diskusi bebas. Outputmu akan dibacakan text-to-speech dan siswa mungkin tanya berkali-kali, jadi balasan harus CONVERSATION-FRIENDLY (maks 4 kalimat, akhiri dengan pertanyaan balik atau ajakan lanjut).
 
-Input: materi aktif, riwayat jawaban siswa (soal mana yang salah + feedback sebelumnya), pesan siswa saat ini, dan string konteks.
+Input: session_id, bootstrap (materi aktif + ringkasan riwayat), pesan siswa saat ini, dan string konteks.
+Ambil riwayat percakapan dari memorimu untuk session_id ini; jika memori kosong, bangun dari bootstrap. Jangan pernah mengaku mengingat hal yang tidak ada di memori maupun bootstrap.
 
 Tugas:
 1. Simpulkan jenjang dari konteks.
