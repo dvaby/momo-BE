@@ -23,13 +23,10 @@ func main() {
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
 	sseHub := handler.NewSSEHub()
 
-	// BARU Fase 1: Job registry untuk arsitektur v1.4+
+	// Job registry untuk arsitektur v1.4+
 	jobRegistry := job.NewRegistry()
 
-	unifiedHub := sse.NewHub()
-	streamHandler := handler.NewStreamHandler(unifiedHub)
-
-	// Cleanup job lama setiap 5 menit (retention 1 jam) — mencegah memory leak
+	// Cleanup job lama setiap 5 menit (retention 1 jam)
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -40,6 +37,10 @@ func main() {
 			}
 		}
 	}()
+
+	// Unified SSE hub untuk stream role-aware
+	unifiedHub := sse.NewHub()
+	streamHandler := handler.NewStreamHandler(unifiedHub)
 
 	// Inisialisasi menggunakan Brevo, bukan SMTP
 	emailClient := emailsender.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName)
@@ -56,7 +57,7 @@ func main() {
 
 	materiRepo := repository.NewMateriRepository(db)
 	materiService := service.NewMateriService(materiRepo, modulRepo, aiClient)
-	materiHandler := handler.NewMateriHandler(materiService)
+	materiHandler := handler.NewMateriHandler(materiService, unifiedHub)
 
 	kelasRepo := repository.NewKelasRepository(db)
 	kelasService := service.NewKelasService(kelasRepo, modulRepo)
@@ -64,7 +65,7 @@ func main() {
 
 	soalRepo := repository.NewSoalRepository(db)
 	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient)
-	soalHandler := handler.NewSoalHandler(soalService)
+	soalHandler := handler.NewSoalHandler(soalService, unifiedHub)
 
 	siswaRepo := repository.NewSiswaRepository(db)
 	siswaService := service.NewSiswaService(siswaRepo, kelasRepo, materiRepo, soalRepo)
@@ -72,13 +73,13 @@ func main() {
 
 	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
 	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient)
-	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService)
+	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService, unifiedHub)
 
 	nilaiRepo := repository.NewNilaiRepository(db)
 	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 	nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
-	// BARU Fase 1: handler callback AI
+	// Handler callback AI
 	aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken)
 
 	r := router.SetupRouter(

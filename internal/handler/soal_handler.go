@@ -10,17 +10,22 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
 	"momo-be/internal/model"
 	"momo-be/internal/service"
+	"momo-be/internal/sse"
 )
 
 type SoalHandler struct {
 	service *service.SoalService
+	hub     *sse.Hub
 }
 
-func NewSoalHandler(service *service.SoalService) *SoalHandler {
-	return &SoalHandler{service: service}
+func NewSoalHandler(service *service.SoalService, hub *sse.Hub) *SoalHandler {
+	return &SoalHandler{service: service, hub: hub}
 }
+
+// SoalResponse dan ToSoalResponse sudah ada di dto.go, tidak perlu dideklarasikan ulang
 
 func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
@@ -100,11 +105,6 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	tempFilePath := tempFile.Name()
 	defer os.Remove(tempFilePath)
 
-	// ============================================================
-	// SYNCHRONOUS (14 Sept): request DITAHAN sampai AI selesai
-	// mengekstrak + menyimpan soal. FE tidak menerima response
-	// apapun sebelum proses benar-benar selesai.
-	// ============================================================
 	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFilePath, guruID)
 	if err != nil {
 		log.Printf("[soal] gagal memproses soal untuk modul %d: %v", modulID, err)
@@ -135,6 +135,15 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	}
 
 	log.Printf("[soal] berhasil memproses %d soal untuk modul %d", len(responseData), modulID)
+
+	// Emit event ke unified hub (bonus, tidak blocking)
+	if h.hub != nil {
+		h.hub.BroadcastToGuru("soal-ready", map[string]interface{}{
+			"modul_id": modulID,
+			"jenis":    jenis,
+			"jumlah":   len(responseData),
+		})
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Soal berhasil diproses",
@@ -188,30 +197,7 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 	})
 }
 
-// --- DTO untuk CRUD Soal Manual ---
-
-type createSoalManualRequest struct {
-	Jenis        string `json:"jenis" binding:"required"`
-	Pertanyaan   string `json:"pertanyaan" binding:"required"`
-	PilihanA     string `json:"pilihan_a" binding:"required"`
-	PilihanB     string `json:"pilihan_b" binding:"required"`
-	PilihanC     string `json:"pilihan_c" binding:"required"`
-	PilihanD     string `json:"pilihan_d" binding:"required"`
-	KunciJawaban string `json:"kunci_jawaban" binding:"required"`
-}
-
-type updateSoalRequest struct {
-	Jenis        string `json:"jenis"`
-	Pertanyaan   string `json:"pertanyaan" binding:"required"`
-	PilihanA     string `json:"pilihan_a" binding:"required"`
-	PilihanB     string `json:"pilihan_b" binding:"required"`
-	PilihanC     string `json:"pilihan_c" binding:"required"`
-	PilihanD     string `json:"pilihan_d" binding:"required"`
-	KunciJawaban string `json:"kunci_jawaban" binding:"required"`
-}
-
 // GetSoalByModulForGuru — GET /api/v1/modul/:id/soal/list
-// Endpoint khusus GURU untuk melihat soal dengan filter jenis (kunci_jawaban tetap disembunyikan)
 func (h *SoalHandler) GetSoalByModulForGuru(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
@@ -264,7 +250,15 @@ func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
 		return
 	}
 
-	var req createSoalManualRequest
+	var req struct {
+		Jenis        string `json:"jenis" binding:"required"`
+		Pertanyaan   string `json:"pertanyaan" binding:"required"`
+		PilihanA     string `json:"pilihan_a" binding:"required"`
+		PilihanB     string `json:"pilihan_b" binding:"required"`
+		PilihanC     string `json:"pilihan_c" binding:"required"`
+		PilihanD     string `json:"pilihan_d" binding:"required"`
+		KunciJawaban string `json:"kunci_jawaban" binding:"required"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (jenis, pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
 		return
@@ -301,7 +295,15 @@ func (h *SoalHandler) UpdateSoal(c *gin.Context) {
 		return
 	}
 
-	var req updateSoalRequest
+	var req struct {
+		Jenis        string `json:"jenis"`
+		Pertanyaan   string `json:"pertanyaan" binding:"required"`
+		PilihanA     string `json:"pilihan_a" binding:"required"`
+		PilihanB     string `json:"pilihan_b" binding:"required"`
+		PilihanC     string `json:"pilihan_c" binding:"required"`
+		PilihanD     string `json:"pilihan_d" binding:"required"`
+		KunciJawaban string `json:"kunci_jawaban" binding:"required"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
 		return

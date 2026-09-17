@@ -25,7 +25,7 @@ func SetupRouter(
 	nilaiHandler *handler.NilaiHandler,
 	guruHandler *handler.GuruHandler,
 	aiCallbackHandler *handler.AICallbackHandler,
-	streamHandler *handler.StreamHandler,
+	streamHandler *handler.StreamHandler, // BARU: parameter tambahan
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -69,24 +69,12 @@ func SetupRouter(
 		api.POST("/join", middleware.RateLimiterMiddleware(authLimiter), siswaHandler.JoinSiswa)
 		api.POST("/test-extract-pdf", middleware.RateLimiterMiddleware(aiLimiter), uploadHandler.TestExtractPDF)
 
-		internal := api.Group("/internal")
-		{
-			internal.POST("/ai-callback", aiCallbackHandler.Handle)
-		}
-
-		streamAuth := api.Group("")
-		streamAuth.Use(middleware.UnifiedAuthMiddleware())
-		{
-			streamAuth.GET("/stream", streamHandler.HandleStream)
-		}
-
 		siswaAuth := api.Group("")
 		siswaAuth.Use(middleware.AuthMiddleware())
 		{
 			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
-
-			//Endpoint siswa untuk belajar
+			// Endpoint siswa untuk belajar (sudah ada dari sebelumnya)
 			siswaAuth.GET("/siswa/kelas-saya", siswaHandler.GetKelasSaya)
 			siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
 		}
@@ -102,7 +90,6 @@ func SetupRouter(
 			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
 
 			// --- BARU: SSE Stream Route ---
-			// Endpoint ini digunakan Frontend untuk listen real-time update kelas
 			guruAuth.GET("/kelas/stream", kelasHandler.StreamKelas)
 
 			// Kelas CRUD Routes
@@ -118,7 +105,7 @@ func SetupRouter(
 
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
 			// Materi CRUD (manual)
-			guruAuth.GET("/modul/:id/materi", materiHandler.GetMateriByModul)
+			guruAuth.GET("/modul/:id/materi", materiHandler.ListMateri)
 			guruAuth.POST("/modul/:id/materi/manual", materiHandler.CreateMateriManual)
 			guruAuth.PUT("/materi/:id", materiHandler.UpdateMateri)
 			guruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
@@ -129,6 +116,16 @@ func SetupRouter(
 			guruAuth.POST("/modul/:id/soal/manual", soalHandler.CreateSoalManual)
 			guruAuth.PUT("/soal/:id", soalHandler.UpdateSoal)
 			guruAuth.DELETE("/soal/:id", soalHandler.DeleteSoal)
+
+			// BARU: internal endpoint untuk callback AI
+			guruAuth.POST("/internal/ai-callback", aiCallbackHandler.Handle)
+		}
+
+		// BARU Fase 2: Unified stream (role-aware: guru ATAU siswa)
+		streamAuth := api.Group("")
+		streamAuth.Use(middleware.UnifiedAuthMiddleware())
+		{
+			streamAuth.GET("/stream", streamHandler.HandleStream)
 		}
 	}
 
