@@ -56,7 +56,8 @@ func main() {
 	uploadHandler := handler.NewUploadHandler()
 
 	materiRepo := repository.NewMateriRepository(db)
-	callbackURL := cfg.AICallbackBaseURL + "/api/v1/internal/ai-callback"
+	callbackURL := cfg.CallbackURLWithSecret()
+	log.Printf("[startup] callback URL: %s...%s", callbackURL[:40], callbackURL[len(callbackURL)-10:])
 	materiService := service.NewMateriService(materiRepo, modulRepo, aiClient, jobRegistry, callbackURL)
 	materiHandler := handler.NewMateriHandler(materiService, unifiedHub)
 

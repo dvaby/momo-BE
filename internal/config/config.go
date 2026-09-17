@@ -82,3 +82,14 @@ func LoadConfig() *Config {
 		AICallbackBaseURL:   aiCallbackBaseURL,
 	}
 }
+
+// CallbackURLWithSecret mengembalikan URL callback lengkap dengan query param secret.
+// AI Service akan POST ke URL ini persis seperti yang kita kirim di request,
+// sehingga secret otomatis terbawa tanpa perlu header tambahan.
+func (c *Config) CallbackURLWithSecret() string {
+	if c.AICallbackBaseURL == "" {
+		return ""
+	}
+	// Gunakan AIInternalToken sebagai secret di query param
+	return c.AICallbackBaseURL + "/api/v1/internal/ai-callback?token=" + c.AIInternalToken
+}

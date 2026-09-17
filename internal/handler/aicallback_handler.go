@@ -24,12 +24,14 @@ func NewAICallbackHandler(registry *job.Registry, internalKey string) *AICallbac
 }
 
 // Handle menerima callback dari AI Service setelah job selesai.
-// Header wajib: X-AI-Internal-Token
+// Autentikasi via query param `token` yang disisipkan di callback_url oleh backend.
+// AI Service cukup POST ke URL yang kami kirim — tidak perlu ubah code mereka.
 func (h *AICallbackHandler) Handle(c *gin.Context) {
-	// Validasi token internal
-	token := c.GetHeader("X-AI-Internal-Token")
+	// Validasi token dari query param (bukan header)
+	token := c.Query("token")
 	if token != h.internalKey || h.internalKey == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "token internal tidak valid"})
+		log.Printf("[ai-callback] REJECTED: token tidak valid (dapat '%s')", token)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token tidak valid"})
 		return
 	}
 
@@ -50,12 +52,11 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[ai-callback] job=%s tipe=%s status=%s", req.JobID, req.Tipe, req.Status)
+	log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s", req.JobID, req.Tipe, req.Status)
 
 	switch req.Status {
 	case "success":
 		if err := h.registry.Complete(req.JobID, req.Hasil); err != nil {
-			// Job tidak terdaftar — AI kirim callback tanpa register dulu, abaikan
 			log.Printf("[ai-callback] warning: %v", err)
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
