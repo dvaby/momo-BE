@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"momo-be/internal/job"
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 	"momo-be/pkg/aiclient"
@@ -13,23 +15,29 @@ import (
 )
 
 type SoalService struct {
-	repo      *repository.SoalRepository
-	kelasRepo *repository.KelasRepository
-	modulRepo repository.ModulRepository // Menggunakan interface langsung (tanpa *)
-	aiClient  *aiclient.Client
+	repo        *repository.SoalRepository
+	kelasRepo   *repository.KelasRepository
+	modulRepo   repository.ModulRepository
+	aiClient    *aiclient.Client
+	jobRegistry *job.Registry // BARU
+	callbackURL string        // BARU
 }
 
 func NewSoalService(
 	repo *repository.SoalRepository,
 	kelasRepo *repository.KelasRepository,
-	modulRepo repository.ModulRepository, // Tanpa *
+	modulRepo repository.ModulRepository,
 	aiClient *aiclient.Client,
+	jobRegistry *job.Registry, // BARU
+	callbackURL string, // BARU
 ) *SoalService {
 	return &SoalService{
-		repo:      repo,
-		kelasRepo: kelasRepo,
-		modulRepo: modulRepo,
-		aiClient:  aiClient,
+		repo:        repo,
+		kelasRepo:   kelasRepo,
+		modulRepo:   modulRepo,
+		aiClient:    aiClient,
+		jobRegistry: jobRegistry,
+		callbackURL: callbackURL,
 	}
 }
 
@@ -41,8 +49,55 @@ func (s *SoalService) ValidateModulOwnership(modulID uint, guruID uint) error {
 	return nil
 }
 
+// rakitKonteks buat string konteks untuk AI Service (inferensi jenjang)
+func (s *SoalService) rakitKonteks(modulID uint) string {
+	modul, err := s.modulRepo.FindByID(modulID)
+	if err != nil {
+		return fmt.Sprintf("Modul ID: %d", modulID)
+	}
+	return fmt.Sprintf("Modul: %s", modul.Nama)
+}
+
+// prosesSatuChunk kirim 1 chunk ke AI Service via sync-via-callback pattern.
+// Return list soal yang berhasil diekstrak dari chunk ini.
+func (s *SoalService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int, konteks string) ([]aiclient.SoalItem, error) {
+	jobID := job.GenerateID("soal")
+	s.jobRegistry.Register(jobID, job.JobTypeSoal, 0, "", "")
+
+	result, err := s.aiClient.ProcessTextWithJob("soal", chunk, jobID, s.callbackURL, konteks)
+	if err != nil {
+		return nil, fmt.Errorf("gagal menghubungi AI Service: %w", err)
+	}
+
+	// Pola baru (ack) — tunggu callback
+	if result.Ack != nil {
+		log.Printf("[soal] chunk %d/%d: ack diterima, menunggu callback...", chunkIdx, totalChunks)
+		finished := s.jobRegistry.WaitSync(jobID, 150*time.Second)
+		if finished == nil {
+			return nil, fmt.Errorf("timeout menunggu callback dari AI Service (150 detik)")
+		}
+		if finished.Status == "failed" {
+			return nil, fmt.Errorf("AI Service gagal memproses chunk: %s", finished.Error)
+		}
+		_, soalItems, err := job.ParseProcessResult(finished.Hasil)
+		if err != nil {
+			return nil, fmt.Errorf("gagal parse hasil: %w", err)
+		}
+		return soalItems, nil
+	}
+
+	// Pola lama (response langsung) — fallback untuk AI Service versi lama
+	if result.ProcessResult != nil {
+		if !result.ProcessResult.Success {
+			return nil, fmt.Errorf("AI Service gagal: %s", result.ProcessResult.Message)
+		}
+		return result.ProcessResult.Data.Soal, nil
+	}
+
+	return nil, fmt.Errorf("response AI Service tidak dikenali")
+}
+
 func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string, guruID uint) ([]model.Soal, error) {
-	// Validasi kepemilikan modul
 	if err := s.ValidateModulOwnership(modulID, guruID); err != nil {
 		return nil, err
 	}
@@ -52,26 +107,23 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		return nil, fmt.Errorf("gagal ekstrak PDF: %w", err)
 	}
 
-	// Chunking teks panjang (2000 karakter per chunk, 200 karakter overlap)
+	konteks := s.rakitKonteks(modulID)
 	chunks := textutil.ChunkText(teksMentah, 2000, 200)
 
 	var soalList []model.Soal
+	chunkGagal := 0
 
 	for i, chunk := range chunks {
 		log.Printf("[soal] memproses chunk %d/%d (%d karakter)", i+1, len(chunks), len(chunk))
 
-		aiResponse, err := s.aiClient.ProcessText("soal", chunk)
+		soalItems, err := s.prosesSatuChunk(chunk, i+1, len(chunks), konteks)
 		if err != nil {
 			log.Printf("[soal] warning: chunk %d gagal: %v", i+1, err)
-			continue // skip chunk yang gagal
-		}
-
-		if !aiResponse.Success {
-			log.Printf("[soal] warning: chunk %d tidak sukses: %s", i+1, aiResponse.Message)
+			chunkGagal++
 			continue
 		}
 
-		for _, item := range aiResponse.Data.Soal {
+		for _, item := range soalItems {
 			soalList = append(soalList, model.Soal{
 				ModulID:      modulID,
 				Jenis:        jenis,
@@ -86,16 +138,17 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	}
 
 	if len(soalList) == 0 {
-		return nil, fmt.Errorf("AI Service tidak menemukan soal pilihan ganda yang valid dari PDF ini")
+		return nil, fmt.Errorf("AI Service tidak menemukan soal pilihan ganda yang valid dari PDF ini (chunk gagal: %d/%d)", chunkGagal, len(chunks))
 	}
 
-	err = s.repo.CreateBatch(soalList)
-	if err != nil {
+	if err := s.repo.CreateBatch(soalList); err != nil {
 		return nil, fmt.Errorf("gagal menyimpan soal ke database: %w", err)
 	}
 
 	return soalList, nil
 }
+
+// --- Method-method di bawah TIDAK BERUBAH ---
 
 func (s *SoalService) GetSoalByModulAndJenisForSiswa(modulID uint, kelasID uint, jenis model.JenisSoal) ([]model.Soal, error) {
 	allowed, err := s.kelasRepo.IsModulInKelas(kelasID, modulID)
@@ -105,11 +158,9 @@ func (s *SoalService) GetSoalByModulAndJenisForSiswa(modulID uint, kelasID uint,
 	if !allowed {
 		return nil, fmt.Errorf("modul ini tidak ditugaskan untuk kelas Anda")
 	}
-
 	return s.repo.FindByModulAndJenis(modulID, jenis)
 }
 
-// GetByModulIDAndJenis mengambil daftar soal milik modul (dengan cek kepemilikan guru)
 func (s *SoalService) GetByModulIDAndJenis(modulID uint, guruID uint, jenis model.JenisSoal) ([]model.Soal, error) {
 	if err := s.ValidateModulOwnership(modulID, guruID); err != nil {
 		return nil, err
@@ -117,7 +168,6 @@ func (s *SoalService) GetByModulIDAndJenis(modulID uint, guruID uint, jenis mode
 	return s.repo.FindByModulAndJenis(modulID, jenis)
 }
 
-// CreateManual membuat soal tulis tangan (tanpa PDF/AI)
 func (s *SoalService) CreateManual(modulID uint, guruID uint, jenis model.JenisSoal, pertanyaan, pilihanA, pilihanB, pilihanC, pilihanD, kunciJawaban string) (*model.Soal, error) {
 	if err := s.ValidateModulOwnership(modulID, guruID); err != nil {
 		return nil, err
@@ -138,14 +188,9 @@ func (s *SoalService) CreateManual(modulID uint, guruID uint, jenis model.JenisS
 	}
 
 	soal := &model.Soal{
-		ModulID:      modulID,
-		Jenis:        jenis,
-		Pertanyaan:   pertanyaan,
-		PilihanA:     pilihanA,
-		PilihanB:     pilihanB,
-		PilihanC:     pilihanC,
-		PilihanD:     pilihanD,
-		KunciJawaban: kunciJawaban,
+		ModulID: modulID, Jenis: jenis,
+		Pertanyaan: pertanyaan, PilihanA: pilihanA, PilihanB: pilihanB,
+		PilihanC: pilihanC, PilihanD: pilihanD, KunciJawaban: kunciJawaban,
 	}
 	if err := s.repo.Create(soal); err != nil {
 		return nil, fmt.Errorf("gagal menyimpan soal: %w", err)
@@ -153,20 +198,17 @@ func (s *SoalService) CreateManual(modulID uint, guruID uint, jenis model.JenisS
 	return soal, nil
 }
 
-// validateSoalOwnership memastikan soal ada dan modul induknya milik guru ini
 func (s *SoalService) validateSoalOwnership(soalID uint, guruID uint) (*model.Soal, error) {
 	soal, err := s.repo.FindByID(soalID)
 	if err != nil {
 		return nil, fmt.Errorf("soal tidak ditemukan")
 	}
-	// Cek kepemilikan modul (asumsi SoalService punya akses ke modulRepo)
 	if _, err := s.modulRepo.FindByIDAndGuruID(soal.ModulID, guruID); err != nil {
 		return nil, fmt.Errorf("akses ditolak: soal ini bukan milik Anda")
 	}
 	return soal, nil
 }
 
-// Update mengubah pertanyaan/pilihan/kunci jawaban/jenis soal
 func (s *SoalService) Update(soalID uint, guruID uint, pertanyaan, pilihanA, pilihanB, pilihanC, pilihanD, kunciJawaban string, jenis model.JenisSoal) (*model.Soal, error) {
 	soal, err := s.validateSoalOwnership(soalID, guruID)
 	if err != nil {
@@ -186,7 +228,6 @@ func (s *SoalService) Update(soalID uint, guruID uint, pertanyaan, pilihanA, pil
 	if jenis != "" && jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
 		return nil, fmt.Errorf("jenis soal wajib salah satu dari: harian, uts, uas")
 	}
-
 	soal.Pertanyaan = pertanyaan
 	soal.PilihanA = pilihanA
 	soal.PilihanB = pilihanB
@@ -202,7 +243,6 @@ func (s *SoalService) Update(soalID uint, guruID uint, pertanyaan, pilihanA, pil
 	return soal, nil
 }
 
-// Delete menghapus satu soal
 func (s *SoalService) Delete(soalID uint, guruID uint) error {
 	soal, err := s.validateSoalOwnership(soalID, guruID)
 	if err != nil {

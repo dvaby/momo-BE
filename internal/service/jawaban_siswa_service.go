@@ -2,18 +2,23 @@ package service
 
 import (
 	"fmt"
+	"log"
+	"time"
 
+	"momo-be/internal/job"
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 	"momo-be/pkg/aiclient"
 )
 
 type JawabanSiswaService struct {
-	repo      *repository.JawabanSiswaRepository
-	soalRepo  *repository.SoalRepository
-	siswaRepo *repository.SiswaRepository
-	kelasRepo *repository.KelasRepository
-	aiClient  *aiclient.Client
+	repo        *repository.JawabanSiswaRepository
+	soalRepo    *repository.SoalRepository
+	siswaRepo   *repository.SiswaRepository
+	kelasRepo   *repository.KelasRepository
+	aiClient    *aiclient.Client
+	jobRegistry *job.Registry // BARU
+	callbackURL string        // BARU
 }
 
 func NewJawabanSiswaService(
@@ -22,18 +27,31 @@ func NewJawabanSiswaService(
 	siswaRepo *repository.SiswaRepository,
 	kelasRepo *repository.KelasRepository,
 	aiClient *aiclient.Client,
+	jobRegistry *job.Registry, // BARU
+	callbackURL string, // BARU
 ) *JawabanSiswaService {
 	return &JawabanSiswaService{
-		repo:      repo,
-		soalRepo:  soalRepo,
-		siswaRepo: siswaRepo,
-		kelasRepo: kelasRepo,
-		aiClient:  aiClient,
+		repo:        repo,
+		soalRepo:    soalRepo,
+		siswaRepo:   siswaRepo,
+		kelasRepo:   kelasRepo,
+		aiClient:    aiClient,
+		jobRegistry: jobRegistry,
+		callbackURL: callbackURL,
 	}
 }
 
+// rakitKonteks buat string konteks untuk AI Service (inferensi jenjang)
+func (s *JawabanSiswaService) rakitKonteks(kelasID uint) string {
+	kelas, err := s.kelasRepo.FindByID(kelasID)
+	if err != nil {
+		return fmt.Sprintf("Kelas ID: %d", kelasID)
+	}
+	return fmt.Sprintf("Kelas: %s (%s)", kelas.NamaKelas, kelas.MataPelajaran)
+}
+
 func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMentah string) (*model.JawabanSiswa, error) {
-	// 1. Ambil data profil siswa untuk mendapatkan kelas_id
+	// 1. Ambil data profil siswa
 	siswa, err := s.siswaRepo.FindByID(siswaID)
 	if err != nil {
 		return nil, fmt.Errorf("data siswa tidak ditemukan: %w", err)
@@ -62,7 +80,11 @@ func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMe
 		}
 	}
 
-	// 5. Evaluasi jawaban via AI Service
+	// 5. Evaluasi jawaban via AI Service dengan sync-via-callback
+	konteks := s.rakitKonteks(siswa.KelasID)
+	jobID := job.GenerateID("eval")
+	s.jobRegistry.Register(jobID, job.JobTypeEvaluate, 0, "", "")
+
 	evalReq := aiclient.EvaluateRequest{
 		Pertanyaan:         soal.Pertanyaan,
 		PilihanA:           soal.PilihanA,
@@ -71,33 +93,60 @@ func (s *JawabanSiswaService) SubmitJawaban(siswaID uint, soalID uint, jawabanMe
 		PilihanD:           soal.PilihanD,
 		KunciJawaban:       soal.KunciJawaban,
 		JawabanSiswaMentah: jawabanMentah,
+		JobID:              jobID,
+		CallbackURL:        s.callbackURL,
+		Konteks:            konteks,
 	}
 
-	aiResponse, err := s.aiClient.EvaluateAnswer(evalReq)
+	result, err := s.aiClient.EvaluateAnswerWithJob(evalReq)
 	if err != nil {
 		return nil, fmt.Errorf("gagal menghubungi AI Service: %w", err)
 	}
 
-	if !aiResponse.Success {
-		errMsg := "AI Service gagal mengevaluasi jawaban"
-		if aiResponse.Message != "" {
-			errMsg = aiResponse.Message
+	var jawabanTerdeteksi string
+	var benar bool
+	var feedback string
+
+	if result.Ack != nil {
+		log.Printf("[jawaban] ack diterima untuk soal %d, menunggu feedback...", soalID)
+		finished := s.jobRegistry.WaitSync(jobID, 30*time.Second)
+		if finished == nil {
+			return nil, fmt.Errorf("timeout menunggu feedback dari AI Service (30 detik)")
 		}
-		return nil, fmt.Errorf(errMsg)
+		if finished.Status == "failed" {
+			return nil, fmt.Errorf("AI Service gagal mengevaluasi jawaban: %s", finished.Error)
+		}
+		jawabanTerdeteksi, benar, feedback, _, err = job.ParseEvaluateResult(finished.Hasil)
+		if err != nil {
+			return nil, fmt.Errorf("gagal parse feedback: %w", err)
+		}
+	} else if result.EvalResult != nil {
+		// Pola lama (pola sync langsung)
+		if !result.EvalResult.Success {
+			errMsg := "AI Service gagal mengevaluasi jawaban"
+			if result.EvalResult.Message != "" {
+				errMsg = result.EvalResult.Message
+			}
+			return nil, fmt.Errorf(errMsg)
+		}
+		jawabanTerdeteksi = result.EvalResult.Data.JawabanTerdeteksi
+		benar = result.EvalResult.Data.Benar
+		feedback = result.EvalResult.Data.Feedback
+	} else {
+		return nil, fmt.Errorf("response AI Service tidak dikenali")
 	}
 
-	// 6. Simpan baris jawaban siswa
+	// 6. Simpan jawaban siswa
 	jawaban := &model.JawabanSiswa{
 		SiswaID:           siswaID,
 		SoalID:            soalID,
 		JawabanMentah:     jawabanMentah,
-		JawabanTerdeteksi: aiResponse.Data.JawabanTerdeteksi,
-		Benar:             aiResponse.Data.Benar,
-		Feedback:          aiResponse.Data.Feedback,
+		JawabanTerdeteksi: jawabanTerdeteksi,
+		Benar:             benar,
+		Feedback:          feedback,
 	}
 
-	err = s.repo.Create(jawaban)
-	if err != nil {
+	if err := s.repo.Create(jawaban); err != nil {
 		return nil, fmt.Errorf("gagal menyimpan jawaban: %w", err)
 	}
 

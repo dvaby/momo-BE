@@ -56,7 +56,8 @@ func main() {
 	uploadHandler := handler.NewUploadHandler()
 
 	materiRepo := repository.NewMateriRepository(db)
-	materiService := service.NewMateriService(materiRepo, modulRepo, aiClient)
+	callbackURL := cfg.AICallbackBaseURL + "/api/v1/internal/ai-callback"
+	materiService := service.NewMateriService(materiRepo, modulRepo, aiClient, jobRegistry, callbackURL)
 	materiHandler := handler.NewMateriHandler(materiService, unifiedHub)
 
 	kelasRepo := repository.NewKelasRepository(db)
@@ -64,7 +65,7 @@ func main() {
 	kelasHandler := handler.NewKelasHandler(kelasService, sseHub)
 
 	soalRepo := repository.NewSoalRepository(db)
-	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient)
+	soalService := service.NewSoalService(soalRepo, kelasRepo, modulRepo, aiClient, jobRegistry, callbackURL)
 	soalHandler := handler.NewSoalHandler(soalService, unifiedHub)
 
 	siswaRepo := repository.NewSiswaRepository(db)
@@ -72,7 +73,7 @@ func main() {
 	siswaHandler := handler.NewSiswaHandler(siswaService)
 
 	jawabanSiswaRepo := repository.NewJawabanSiswaRepository(db)
-	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient)
+	jawabanSiswaService := service.NewJawabanSiswaService(jawabanSiswaRepo, soalRepo, siswaRepo, kelasRepo, aiClient, jobRegistry, callbackURL)
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService, unifiedHub)
 
 	nilaiRepo := repository.NewNilaiRepository(db)
