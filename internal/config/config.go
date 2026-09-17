@@ -23,6 +23,9 @@ type Config struct {
 	AppBaseURL          string
 	FEVerifyRedirectURL string
 	JWTSecret           string
+	// BARU untuk arsitektur v1.4+ (Fase 1): token internal AI + URL callback
+	AIInternalToken   string
+	AICallbackBaseURL string
 }
 
 func LoadConfig() *Config {
@@ -51,6 +54,14 @@ func LoadConfig() *Config {
 		feVerifyURL = "http://localhost:3000/email-verified"
 	}
 
+	// BARU: default kosong dulu, wajib diisi sebelum dipakai (nanti di Fase 3 saat wiring)
+	aiInternalToken := os.Getenv("AI_INTERNAL_TOKEN")
+	aiCallbackBaseURL := os.Getenv("AI_CALLBACK_BASE_URL")
+	if aiCallbackBaseURL == "" {
+		// Default ke AppBaseURL kalau kosong (akan jadi https://momo-be-production.up.railway.app)
+		aiCallbackBaseURL = appBaseURL
+	}
+
 	return &Config{
 		DBHost:              os.Getenv("DB_HOST"),
 		DBPort:              os.Getenv("DB_PORT"),
@@ -67,5 +78,7 @@ func LoadConfig() *Config {
 		AppBaseURL:          appBaseURL,
 		FEVerifyRedirectURL: feVerifyURL,
 		JWTSecret:           os.Getenv("JWT_SECRET"),
+		AIInternalToken:     aiInternalToken,
+		AICallbackBaseURL:   aiCallbackBaseURL,
 	}
 }

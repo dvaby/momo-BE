@@ -24,6 +24,7 @@ func SetupRouter(
 	jawabanSiswaHandler *handler.JawabanSiswaHandler,
 	nilaiHandler *handler.NilaiHandler,
 	guruHandler *handler.GuruHandler,
+	aiCallbackHandler *handler.AICallbackHandler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -66,6 +67,11 @@ func SetupRouter(
 
 		api.POST("/join", middleware.RateLimiterMiddleware(authLimiter), siswaHandler.JoinSiswa)
 		api.POST("/test-extract-pdf", middleware.RateLimiterMiddleware(aiLimiter), uploadHandler.TestExtractPDF)
+
+		internal := api.Group("/internal")
+		{
+			internal.POST("/ai-callback", aiCallbackHandler.Handle)
+		}
 
 		siswaAuth := api.Group("")
 		siswaAuth.Use(middleware.AuthMiddleware())

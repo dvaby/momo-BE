@@ -1,9 +1,13 @@
 package main
 
 import (
+	"log"
+	"time"
+
 	"momo-be/internal/config"
 	"momo-be/internal/database"
 	"momo-be/internal/handler"
+	"momo-be/internal/job"
 	"momo-be/internal/repository"
 	"momo-be/internal/router"
 	"momo-be/internal/service"
@@ -18,7 +22,22 @@ func main() {
 	aiClient := aiclient.NewClient(cfg.AIServiceURL)
 	sseHub := handler.NewSSEHub()
 
-	// PERUBAHAN: Inisialisasi menggunakan Brevo, bukan SMTP
+	// BARU Fase 1: Job registry untuk arsitektur v1.4+
+	jobRegistry := job.NewRegistry()
+
+	// Cleanup job lama setiap 5 menit (retention 1 jam) — mencegah memory leak
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			removed := jobRegistry.Cleanup(1 * time.Hour)
+			if removed > 0 {
+				log.Printf("[job-registry] cleaned up %d old jobs", removed)
+			}
+		}
+	}()
+
+	// Inisialisasi menggunakan Brevo, bukan SMTP
 	emailClient := emailsender.NewClient(cfg.BrevoAPIKey, cfg.BrevoSenderEmail, cfg.BrevoSenderName)
 
 	guruRepo := repository.NewGuruRepository(db)
@@ -55,6 +74,9 @@ func main() {
 	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 	nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
+	// BARU Fase 1: handler callback AI
+	aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken)
+
 	r := router.SetupRouter(
 		cfg,
 		modulHandler,
@@ -66,6 +88,7 @@ func main() {
 		jawabanSiswaHandler,
 		nilaiHandler,
 		guruHandler,
+		aiCallbackHandler, // BARU
 	)
 	r.Run(":" + cfg.ServerPort)
 }
