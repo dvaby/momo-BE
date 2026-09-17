@@ -108,7 +108,7 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	}
 
 	konteks := s.rakitKonteks(modulID)
-	chunks := textutil.ChunkText(teksMentah, 2000, 200)
+	chunks := textutil.ChunkText(teksMentah, 3000, 500)
 
 	var soalList []model.Soal
 	chunkGagal := 0

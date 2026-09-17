@@ -96,7 +96,7 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 	}
 
 	konteks := s.rakitKonteks(modulID)
-	chunks := textutil.ChunkText(teksMentah, 2000, 200)
+	chunks := textutil.ChunkText(teksMentah, 3000, 500)
 
 	var materiList []model.Materi
 	urutanCounter := 1
