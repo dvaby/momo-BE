@@ -25,7 +25,7 @@ func SetupRouter(
 	nilaiHandler *handler.NilaiHandler,
 	guruHandler *handler.GuruHandler,
 	aiCallbackHandler *handler.AICallbackHandler,
-	streamHandler *handler.StreamHandler, // BARU: parameter tambahan
+	streamHandler *handler.StreamHandler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -62,6 +62,7 @@ func SetupRouter(
 
 	api := r.Group("/api/v1")
 	{
+		// ==================== PUBLIC ENDPOINTS ====================
 		api.POST("/guru/register", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Register)
 		api.POST("/guru/login", middleware.RateLimiterMiddleware(authLimiter), guruHandler.Login)
 		api.GET("/guru/verify-email", guruHandler.VerifyEmail)
@@ -69,30 +70,42 @@ func SetupRouter(
 		api.POST("/join", middleware.RateLimiterMiddleware(authLimiter), siswaHandler.JoinSiswa)
 		api.POST("/test-extract-pdf", middleware.RateLimiterMiddleware(aiLimiter), uploadHandler.TestExtractPDF)
 
+		// ==================== SISWA ENDPOINTS ====================
 		siswaAuth := api.Group("")
 		siswaAuth.Use(middleware.AuthMiddleware())
 		{
 			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
-			// Endpoint siswa untuk belajar (sudah ada dari sebelumnya)
 			siswaAuth.GET("/siswa/kelas-saya", siswaHandler.GetKelasSaya)
 			siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
 		}
 
+		// ==================== GURU ENDPOINTS ====================
 		guruAuth := api.Group("")
 		guruAuth.Use(middleware.GuruAuthMiddleware())
 		{
-			// Modul Routes
+			// Modul
 			guruAuth.GET("/modul", modulHandler.GetAllModuls)
 			guruAuth.GET("/modul/:id", modulHandler.GetModulByID)
 			guruAuth.POST("/modul", modulHandler.CreateModul)
+			guruAuth.PUT("/modul/:id", modulHandler.UpdateModul)
+			guruAuth.DELETE("/modul/:id", modulHandler.DeleteModul)
+
+			// Materi
 			guruAuth.POST("/modul/:id/materi", materiHandler.UploadMateri)
+			guruAuth.GET("/modul/:id/materi", materiHandler.ListMateri)
+			guruAuth.POST("/modul/:id/materi/manual", materiHandler.CreateMateriManual)
+			guruAuth.PUT("/materi/:id", materiHandler.UpdateMateri)
+			guruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
+
+			// Soal
 			guruAuth.POST("/modul/:id/soal", soalHandler.UploadSoal)
+			guruAuth.GET("/modul/:id/soal/list", soalHandler.GetSoalByModulForGuru)
+			guruAuth.POST("/modul/:id/soal/manual", soalHandler.CreateSoalManual)
+			guruAuth.PUT("/soal/:id", soalHandler.UpdateSoal)
+			guruAuth.DELETE("/soal/:id", soalHandler.DeleteSoal)
 
-			// --- BARU: SSE Stream Route ---
-			guruAuth.GET("/kelas/stream", kelasHandler.StreamKelas)
-
-			// Kelas CRUD Routes
+			// Kelas
 			guruAuth.POST("/kelas", kelasHandler.CreateKelas)
 			guruAuth.GET("/kelas", kelasHandler.GetKelasGuru)
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
@@ -104,24 +117,16 @@ func SetupRouter(
 			guruAuth.DELETE("/kelas/:id/modul/:modul_id", kelasHandler.RemoveModul)
 
 			guruAuth.GET("/kelas/:id/nilai", nilaiHandler.GetRekapNilai)
-			// Materi CRUD (manual)
-			guruAuth.GET("/modul/:id/materi", materiHandler.ListMateri)
-			guruAuth.POST("/modul/:id/materi/manual", materiHandler.CreateMateriManual)
-			guruAuth.PUT("/materi/:id", materiHandler.UpdateMateri)
-			guruAuth.DELETE("/materi/:id", materiHandler.DeleteMateri)
-			guruAuth.PUT("/modul/:id", modulHandler.UpdateModul)
-			guruAuth.DELETE("/modul/:id", modulHandler.DeleteModul)
-			// Soal CRUD (manual)
-			guruAuth.GET("/modul/:id/soal/list", soalHandler.GetSoalByModulForGuru)
-			guruAuth.POST("/modul/:id/soal/manual", soalHandler.CreateSoalManual)
-			guruAuth.PUT("/soal/:id", soalHandler.UpdateSoal)
-			guruAuth.DELETE("/soal/:id", soalHandler.DeleteSoal)
 
-			// BARU: internal endpoint untuk callback AI
-			guruAuth.POST("/internal/ai-callback", aiCallbackHandler.Handle)
+			// SSE stream lama (backward compatible)
+			guruAuth.GET("/kelas/stream", kelasHandler.StreamKelas)
 		}
 
-		// BARU Fase 2: Unified stream (role-aware: guru ATAU siswa)
+		// ==================== INTERNAL ENDPOINTS ====================
+		// TIDAK PERLU JWT — auth via query param ?token= di handler
+		api.POST("/internal/ai-callback", aiCallbackHandler.Handle)
+
+		// ==================== UNIFIED STREAM (FASE 2) ====================
 		streamAuth := api.Group("")
 		streamAuth.Use(middleware.UnifiedAuthMiddleware())
 		{
