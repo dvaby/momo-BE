@@ -3,18 +3,25 @@ package job
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"momo-be/pkg/aiclient"
 )
 
 // ParseProcessResult mengekstrak materi/soal dari hasil callback.
-// Menangani 2 bentuk: datar {materi:[...], soal:[...]} atau dibungkus {success, data:{...}}
+// Menangani berbagai bentuk response dari AI Service (v1.6 baru).
 func ParseProcessResult(raw json.RawMessage) ([]aiclient.MateriItem, []aiclient.SoalItem, error) {
 	if len(raw) == 0 {
 		return nil, nil, fmt.Errorf("hasil callback kosong")
 	}
 
-	// Coba bentuk datar dulu
+	// DEBUG: log raw response (first 500 chars) kalau gagal parse
+	debugRaw := string(raw)
+	if len(debugRaw) > 500 {
+		debugRaw = debugRaw[:500] + "..."
+	}
+
+	// Coba bentuk 1: datar {materi:[...], soal:[...]}
 	var datar struct {
 		Materi []aiclient.MateriItem `json:"materi"`
 		Soal   []aiclient.SoalItem   `json:"soal"`
@@ -23,7 +30,7 @@ func ParseProcessResult(raw json.RawMessage) ([]aiclient.MateriItem, []aiclient.
 		return datar.Materi, datar.Soal, nil
 	}
 
-	// Coba bentuk dibungkus {success, data: {...}}
+	// Coba bentuk 2: {success, data:{...}}
 	var wrapped struct {
 		Success bool `json:"success"`
 		Data    struct {
@@ -35,7 +42,31 @@ func ParseProcessResult(raw json.RawMessage) ([]aiclient.MateriItem, []aiclient.
 		return wrapped.Data.Materi, wrapped.Data.Soal, nil
 	}
 
-	return nil, nil, fmt.Errorf("bentuk hasil process tidak dikenali")
+	// Coba bentuk 3: AI Service v1.6 baru mungkin return {hasil: {materi/soal: [...]}}
+	var withHasil struct {
+		Hasil struct {
+			Materi []aiclient.MateriItem `json:"materi"`
+			Soal   []aiclient.SoalItem   `json:"soal"`
+		} `json:"hasil"`
+	}
+	if err := json.Unmarshal(raw, &withHasil); err == nil && (len(withHasil.Hasil.Materi) > 0 || len(withHasil.Hasil.Soal) > 0) {
+		return withHasil.Hasil.Materi, withHasil.Hasil.Soal, nil
+	}
+
+	// Coba bentuk 4: langsung array soal/materi
+	var langsungSoal []aiclient.SoalItem
+	if err := json.Unmarshal(raw, &langsungSoal); err == nil && len(langsungSoal) > 0 {
+		return nil, langsungSoal, nil
+	}
+
+	var langsungMateri []aiclient.MateriItem
+	if err := json.Unmarshal(raw, &langsungMateri); err == nil && len(langsungMateri) > 0 {
+		return langsungMateri, nil, nil
+	}
+
+	// Gagal semua — log raw response untuk debug
+	log.Printf("[parse] WARNING: bentuk hasil tidak dikenali, raw: %s", debugRaw)
+	return nil, nil, fmt.Errorf("bentuk hasil process tidak dikenali (lihat log untuk raw response)")
 }
 
 // ParseEvaluateResult mengekstrak feedback dari hasil callback /evaluate.
@@ -69,5 +100,10 @@ func ParseEvaluateResult(raw json.RawMessage) (string, bool, string, bool, error
 		return wrapped.Data.JawabanTerdeteksi, wrapped.Data.Benar, wrapped.Data.Feedback, wrapped.Data.PerluKlarifikasi, nil
 	}
 
+	debugRaw := string(raw)
+	if len(debugRaw) > 500 {
+		debugRaw = debugRaw[:500] + "..."
+	}
+	log.Printf("[parse-evaluate] WARNING: bentuk hasil tidak dikenali, raw: %s", debugRaw)
 	return "", false, "", false, fmt.Errorf("bentuk hasil evaluate tidak dikenali")
 }

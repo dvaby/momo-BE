@@ -52,7 +52,11 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s", req.JobID, req.Tipe, req.Status)
+		rawHasil := string(req.Hasil)
+	if len(rawHasil) > 300 {
+		rawHasil = rawHasil[:300] + "..."
+	}
+	log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s, hasil=%s", req.JobID, req.Tipe, req.Status, rawHasil)
 
 	switch req.Status {
 	case "success":
