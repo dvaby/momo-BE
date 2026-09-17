@@ -20,17 +20,17 @@ const (
 
 // Job merepresentasikan satu unit kerja async ke AI Service
 type Job struct {
-	ID          string
-	Type        JobType
-	ModulID     uint   // untuk materi/soal
-	Jenis       string // untuk soal (harian/uts/uas)
-	SessionID   string // untuk evaluate/tutor
-	CreatedAt   time.Time
-	CallbackAt  time.Time
-	Status      string // pending | success | failed
-	Hasil       []byte // JSON mentah hasil callback
-	Error       string
-	Processed   bool // idempotency flag
+	ID         string
+	Type       JobType
+	ModulID    uint   // untuk materi/soal
+	Jenis      string // untuk soal (harian/uts/uas)
+	SessionID  string // untuk evaluate/tutor
+	CreatedAt  time.Time
+	CallbackAt time.Time
+	Status     string // pending | success | failed
+	Hasil      []byte // JSON mentah hasil callback
+	Error      string
+	Processed  bool // idempotency flag
 }
 
 // ============================================================
@@ -41,7 +41,7 @@ type Job struct {
 // setelah selesai memproses job.
 type CallbackRequest struct {
 	JobID        string          `json:"job_id"`
-	Tipe         string          `json:"tipe"` // materi | soal | evaluate | tutor
+	Tipe         string          `json:"tipe"`   // materi | soal | evaluate | tutor
 	Status       string          `json:"status"` // success | failed
 	ErrorMessage string          `json:"error_message,omitempty"`
 	Hasil        json.RawMessage `json:"hasil,omitempty"`

@@ -11,6 +11,7 @@ import (
 	"momo-be/internal/repository"
 	"momo-be/internal/router"
 	"momo-be/internal/service"
+	"momo-be/internal/sse"
 	"momo-be/pkg/aiclient"
 	"momo-be/pkg/emailsender"
 )
@@ -24,6 +25,9 @@ func main() {
 
 	// BARU Fase 1: Job registry untuk arsitektur v1.4+
 	jobRegistry := job.NewRegistry()
+
+	unifiedHub := sse.NewHub()
+	streamHandler := handler.NewStreamHandler(unifiedHub)
 
 	// Cleanup job lama setiap 5 menit (retention 1 jam) — mencegah memory leak
 	go func() {
@@ -88,7 +92,8 @@ func main() {
 		jawabanSiswaHandler,
 		nilaiHandler,
 		guruHandler,
-		aiCallbackHandler, // BARU
+		aiCallbackHandler,
+		streamHandler,
 	)
 	r.Run(":" + cfg.ServerPort)
 }

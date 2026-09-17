@@ -25,6 +25,7 @@ func SetupRouter(
 	nilaiHandler *handler.NilaiHandler,
 	guruHandler *handler.GuruHandler,
 	aiCallbackHandler *handler.AICallbackHandler,
+	streamHandler *handler.StreamHandler,
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -71,6 +72,12 @@ func SetupRouter(
 		internal := api.Group("/internal")
 		{
 			internal.POST("/ai-callback", aiCallbackHandler.Handle)
+		}
+
+		streamAuth := api.Group("")
+		streamAuth.Use(middleware.UnifiedAuthMiddleware())
+		{
+			streamAuth.GET("/stream", streamHandler.HandleStream)
 		}
 
 		siswaAuth := api.Group("")

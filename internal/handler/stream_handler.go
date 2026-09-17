@@ -1,0 +1,95 @@
+package handler
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"momo-be/internal/sse"
+)
+
+type StreamHandler struct {
+	hub *sse.Hub
+}
+
+func NewStreamHandler(hub *sse.Hub) *StreamHandler {
+	return &StreamHandler{hub: hub}
+}
+
+// HandleStream adalah endpoint unified stream: GET /api/v1/stream
+// Role-aware: menerima token guru ATAU siswa, memfilter event per role.
+// KATALOG EVENT (v1.6 §4.4):
+//   - Untuk Guru: kelas-created, kelas-updated, kelas-deleted,
+//     materi-ready, materi-failed, soal-ready, soal-failed,
+//     tutor-failed
+//   - Untuk Siswa: tutor-reply
+//   - Untuk Semua: connected, heartbeat
+func (h *StreamHandler) HandleStream(c *gin.Context) {
+	// Detect role dari context (dipasang oleh UnifiedAuthMiddleware)
+	roleVal, exists := c.Get("role")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Role tidak dikenali"})
+		return
+	}
+
+	var role sse.Role
+	switch roleVal.(string) {
+	case "guru":
+		role = sse.RoleGuru
+	case "siswa":
+		role = sse.RoleSiswa
+	default:
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Role tidak valid"})
+		return
+	}
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Buat client baru
+	client := &sse.Client{
+		Role:   role,
+		Events: make(chan sse.Event, 50),
+		Done:   make(chan struct{}),
+	}
+
+	// Register ke hub
+	h.hub.Register(client)
+
+	// Pastikan unregister saat client disconnect
+	defer h.hub.Unregister(client)
+
+	// Kirim event welcome
+	sse.WriteEvent(c.Writer, "connected", map[string]string{
+		"message": "Terhubung ke stream Momo",
+		"role":    string(role),
+		"time":    time.Now().Format(time.RFC3339),
+	})
+
+	// Heartbeat ticker (jaga koneksi tetap hidup)
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	// Loop utama
+	for {
+		select {
+		case event, ok := <-client.Events:
+			if !ok {
+				return
+			}
+			sse.WriteEvent(c.Writer, event.Type, event.Data)
+
+		case <-heartbeat.C:
+			c.Writer.Write([]byte(": heartbeat\n\n"))
+			c.Writer.Flush()
+
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
+}
