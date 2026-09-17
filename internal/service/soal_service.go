@@ -2,12 +2,14 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 	"momo-be/pkg/aiclient"
 	"momo-be/pkg/pdfworker"
+	"momo-be/pkg/textutil"
 )
 
 type SoalService struct {
@@ -40,10 +42,9 @@ func (s *SoalService) ValidateModulOwnership(modulID uint, guruID uint) error {
 }
 
 func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string, guruID uint) ([]model.Soal, error) {
-	// Memakai FindByIDAndGuruID
-	_, err := s.modulRepo.FindByIDAndGuruID(modulID, guruID)
-	if err != nil {
-		return nil, fmt.Errorf("akses ditolak: modul tidak ditemukan atau bukan milik Anda")
+	// Validasi kepemilikan modul
+	if err := s.ValidateModulOwnership(modulID, guruID); err != nil {
+		return nil, err
 	}
 
 	teksMentah, err := pdfworker.ExtractText(pdfFilePath)
@@ -51,35 +52,41 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		return nil, fmt.Errorf("gagal ekstrak PDF: %w", err)
 	}
 
-	aiResponse, err := s.aiClient.ProcessText("soal", teksMentah)
-	if err != nil {
-		return nil, fmt.Errorf("gagal memproses lewat AI Service: %w", err)
-	}
-
-	if !aiResponse.Success {
-		errMsg := "AI Service gagal memproses teks"
-		if aiResponse.Message != "" {
-			errMsg = aiResponse.Message
-		}
-		return nil, fmt.Errorf(errMsg)
-	}
+	// Chunking teks panjang (2000 karakter per chunk, 200 karakter overlap)
+	chunks := textutil.ChunkText(teksMentah, 2000, 200)
 
 	var soalList []model.Soal
-	for _, item := range aiResponse.Data.Soal {
-		soalList = append(soalList, model.Soal{
-			ModulID:      modulID,
-			Jenis:        jenis,
-			Pertanyaan:   item.Pertanyaan,
-			PilihanA:     item.PilihanA,
-			PilihanB:     item.PilihanB,
-			PilihanC:     item.PilihanC,
-			PilihanD:     item.PilihanD,
-			KunciJawaban: item.KunciJawaban,
-		})
+
+	for i, chunk := range chunks {
+		log.Printf("[soal] memproses chunk %d/%d (%d karakter)", i+1, len(chunks), len(chunk))
+
+		aiResponse, err := s.aiClient.ProcessText("soal", chunk)
+		if err != nil {
+			log.Printf("[soal] warning: chunk %d gagal: %v", i+1, err)
+			continue // skip chunk yang gagal
+		}
+
+		if !aiResponse.Success {
+			log.Printf("[soal] warning: chunk %d tidak sukses: %s", i+1, aiResponse.Message)
+			continue
+		}
+
+		for _, item := range aiResponse.Data.Soal {
+			soalList = append(soalList, model.Soal{
+				ModulID:      modulID,
+				Jenis:        jenis,
+				Pertanyaan:   item.Pertanyaan,
+				PilihanA:     item.PilihanA,
+				PilihanB:     item.PilihanB,
+				PilihanC:     item.PilihanC,
+				PilihanD:     item.PilihanD,
+				KunciJawaban: item.KunciJawaban,
+			})
+		}
 	}
 
 	if len(soalList) == 0 {
-		return nil, fmt.Errorf("AI Service tidak menemukan konten soal yang valid dari PDF ini — pastikan PDF berisi soal, bukan materi")
+		return nil, fmt.Errorf("AI Service tidak menemukan soal pilihan ganda yang valid dari PDF ini")
 	}
 
 	err = s.repo.CreateBatch(soalList)

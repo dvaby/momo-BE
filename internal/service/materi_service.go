@@ -2,12 +2,14 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"momo-be/internal/model"
 	"momo-be/internal/repository"
 	"momo-be/pkg/aiclient"
 	"momo-be/pkg/pdfworker"
+	"momo-be/pkg/textutil"
 )
 
 type MateriService struct {
@@ -34,27 +36,35 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		return nil, fmt.Errorf("gagal ekstrak PDF: %w", err)
 	}
 
-	aiResponse, err := s.aiClient.ProcessText("materi", teksMentah)
-	if err != nil {
-		return nil, fmt.Errorf("gagal memproses lewat AI Service: %w", err)
-	}
-
-	if !aiResponse.Success {
-		errMsg := "AI Service gagal memproses teks"
-		if aiResponse.Message != "" {
-			errMsg = aiResponse.Message
-		}
-		return nil, fmt.Errorf(errMsg)
-	}
+	// Chunking teks panjang (2000 karakter per chunk, 200 karakter overlap)
+	chunks := textutil.ChunkText(teksMentah, 2000, 200)
 
 	var materiList []model.Materi
-	for _, item := range aiResponse.Data.Materi {
-		materiList = append(materiList, model.Materi{
-			ModulID: modulID,
-			Urutan:  item.Urutan,
-			Judul:   item.Judul,
-			Konten:  item.Konten,
-		})
+	urutanCounter := 1
+
+	for i, chunk := range chunks {
+		log.Printf("[materi] memproses chunk %d/%d (%d karakter)", i+1, len(chunks), len(chunk))
+
+		aiResponse, err := s.aiClient.ProcessText("materi", chunk)
+		if err != nil {
+			log.Printf("[materi] warning: chunk %d gagal: %v", i+1, err)
+			continue // skip chunk yang gagal, lanjut ke berikutnya
+		}
+
+		if !aiResponse.Success {
+			log.Printf("[materi] warning: chunk %d tidak sukses: %s", i+1, aiResponse.Message)
+			continue
+		}
+
+		for _, item := range aiResponse.Data.Materi {
+			materiList = append(materiList, model.Materi{
+				ModulID: modulID,
+				Urutan:  urutanCounter,
+				Judul:   item.Judul,
+				Konten:  item.Konten,
+			})
+			urutanCounter++
+		}
 	}
 
 	if len(materiList) == 0 {
