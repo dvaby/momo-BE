@@ -14,6 +14,7 @@ import (
 	"momo-be/internal/model"
 	"momo-be/internal/service"
 	"momo-be/internal/sse"
+	appErrors "momo-be/internal/errors"
 )
 
 type SoalHandler struct {
@@ -25,72 +26,69 @@ func NewSoalHandler(service *service.SoalService, hub *sse.Hub) *SoalHandler {
 	return &SoalHandler{service: service, hub: hub}
 }
 
-// SoalResponse dan ToSoalResponse sudah ada di dto.go, tidak perlu dideklarasikan ulang
-
 func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Token guru tidak valid"))
 		return
 	}
 
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID modul tidak valid"))
 		return
 	}
 
 	jenisParam := c.Query("jenis")
 	jenis := model.JenisSoal(jenisParam)
 	if jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeMissingField, "Query param 'jenis' wajib: harian, uts, atau uas"))
 		return
 	}
 
-	// Validasi kepemilikan Modul dilakukan SEKARANG (synchronous),
-	// supaya guru langsung tahu kalau ditolak, tanpa nunggu proses PDF/AI.
 	if err := h.service.ValidateModulOwnership(uint(modulID), guruID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, appErrors.NewClientError(
+			appErrors.CodeForbidden, err.Error()))
 		return
 	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File PDF wajib dilampirkan dengan field 'file'"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeMissingField, "File PDF wajib dilampirkan dengan field 'file'"))
 		return
 	}
 
-	// --- Validasi Ukuran & Tipe File ---
-	const maxSize = 5 * 1024 * 1024 // 5MB
+	const maxSize = 5 * 1024 * 1024
 	if file.Size > maxSize {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Ukuran file terlalu besar. Maksimal 5MB.",
-			"code":  "FILE_TOO_LARGE",
-		})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFile, "Ukuran file terlalu besar. Maksimal 5MB"))
 		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if ext != ".pdf" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Hanya file PDF yang diperbolehkan",
-			"code":  "INVALID_FILE_TYPE",
-		})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFile, "Hanya file PDF yang diperbolehkan"))
 		return
 	}
-	// -----------------------------------
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuka file"})
+		c.JSON(http.StatusInternalServerError, appErrors.NewServerError(
+			appErrors.CodeInternalError, "Gagal membuka file"))
 		return
 	}
 	defer src.Close()
 
 	tempFile, err := os.CreateTemp("", "soal-*.pdf")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat file sementara"})
+		c.JSON(http.StatusInternalServerError, appErrors.NewServerError(
+			appErrors.CodeInternalError, "Gagal membuat file sementara"))
 		return
 	}
 
@@ -98,7 +96,8 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	tempFile.Close()
 	if err != nil {
 		os.Remove(tempFile.Name())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file sementara"})
+		c.JSON(http.StatusInternalServerError, appErrors.NewServerError(
+			appErrors.CodeInternalError, "Gagal menyimpan file sementara"))
 		return
 	}
 
@@ -108,27 +107,43 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	soalList, err := h.service.ProcessAndSaveSoal(uint(modulID), jenis, tempFilePath, guruID)
 	if err != nil {
 		log.Printf("[soal] gagal memproses soal untuk modul %d: %v", modulID, err)
-
-		errMsg := "Gagal memproses soal dari PDF. "
+		
+		errMsg := err.Error()
+		var resp appErrors.ErrorResponse
+		
 		switch {
-		case strings.Contains(err.Error(), "ekstrak PDF"):
-			errMsg += "File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar."
-		case strings.Contains(err.Error(), "AI Service"), strings.Contains(err.Error(), "timeout"):
-			errMsg += "Layanan AI terlalu lama memproses atau tidak tersedia. Coba lagi atau gunakan PDF yang lebih kecil."
-		case strings.Contains(err.Error(), "tidak menemukan"):
-			errMsg += "AI tidak menemukan soal pilihan ganda yang valid di PDF ini."
+		// AI Service errors
+		case strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "menunggu callback"):
+			resp = appErrors.NewAIError(appErrors.CodeAITimeout,
+				"AI Service terlalu lama memproses. Silakan coba lagi.")
+		case strings.Contains(errMsg, "gagal menghubungi AI Service") || strings.Contains(errMsg, "tidak tersedia"):
+			resp = appErrors.NewAIError(appErrors.CodeAIUnavailable,
+				"AI Service sedang tidak tersedia. Silakan coba beberapa saat lagi.")
+		case strings.Contains(errMsg, "gagal parse hasil") || strings.Contains(errMsg, "tidak dikenali"):
+			resp = appErrors.NewAIError(appErrors.CodeAIInvalidResponse,
+				"AI Service mengembalikan response tidak valid.")
+		case strings.Contains(errMsg, "AI Service") || strings.Contains(errMsg, "tidak menemukan"):
+			resp = appErrors.NewAIError(appErrors.CodeAIProcessingFailed,
+				"AI gagal mengekstrak soal dari PDF. Pastikan PDF berisi soal pilihan ganda.")
+		
+		// Client errors
+		case strings.Contains(errMsg, "ekstrak PDF"):
+			resp = appErrors.NewClientError(appErrors.CodeInvalidFile,
+				"File PDF tidak bisa dibaca. Pastikan PDF berisi teks, bukan hasil scan gambar.")
+		
+		// Server errors
+		case strings.Contains(errMsg, "database"):
+			resp = appErrors.NewServerError(appErrors.CodeDatabaseError,
+				"Gagal menyimpan soal ke database.")
 		default:
-			errMsg += err.Error()
+			resp = appErrors.NewServerError(appErrors.CodeInternalError,
+				"Terjadi kesalahan sistem saat memproses soal.")
 		}
-
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"error": errMsg,
-			"code":  "SOAL_PROCESSING_FAILED",
-		})
+		
+		c.JSON(appErrors.GetHTTPStatus(resp.Code), resp)
 		return
 	}
 
-	// Konversi ke SoalResponse agar kunci_jawaban TIDAK bocor ke FE
 	responseData := make([]SoalResponse, 0, len(soalList))
 	for _, soal := range soalList {
 		responseData = append(responseData, ToSoalResponse(soal))
@@ -136,7 +151,6 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 
 	log.Printf("[soal] berhasil memproses %d soal untuk modul %d", len(responseData), modulID)
 
-	// Emit event ke unified hub (bonus, tidak blocking)
 	if h.hub != nil {
 		h.hub.BroadcastToGuru("soal-ready", map[string]interface{}{
 			"modul_id": modulID,
@@ -153,35 +167,48 @@ func (h *SoalHandler) UploadSoal(c *gin.Context) {
 	})
 }
 
+// Method-method lain (GetSoalByModul, GetSoalByModulForGuru, CreateSoalManual, UpdateSoal, DeleteSoal)
+// TIDAK BERUBAH - biarkan seperti sebelumnya
 func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 	kelasID, ok := getUintFromContext(c, "kelas_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Akses khusus siswa"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Akses khusus siswa"))
 		return
 	}
 
 	modulIDParam := c.Param("id")
 	modulID, err := strconv.ParseUint(modulIDParam, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID modul tidak valid"))
 		return
 	}
 
 	jenisParam := c.Query("jenis")
 	jenis := model.JenisSoal(jenisParam)
 	if jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeMissingField, "Query param 'jenis' wajib: harian, uts, atau uas"))
 		return
 	}
 
 	soalList, err := h.service.GetSoalByModulAndJenisForSiswa(uint(modulID), kelasID, jenis)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "tidak ditugaskan") {
+			c.JSON(http.StatusForbidden, appErrors.NewClientError(
+				appErrors.CodeForbidden, errMsg))
+		} else {
+			c.JSON(http.StatusInternalServerError, appErrors.NewServerError(
+				appErrors.CodeDatabaseError, errMsg))
+		}
 		return
 	}
 
 	if len(soalList) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Belum ada soal untuk modul dan jenis ini"})
+		c.JSON(http.StatusNotFound, appErrors.NewClientError(
+			appErrors.CodeNotFound, "Belum ada soal untuk modul dan jenis ini"))
 		return
 	}
 
@@ -197,30 +224,33 @@ func (h *SoalHandler) GetSoalByModul(c *gin.Context) {
 	})
 }
 
-// GetSoalByModulForGuru — GET /api/v1/modul/:id/soal/list
 func (h *SoalHandler) GetSoalByModulForGuru(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Token guru tidak valid"))
 		return
 	}
 
 	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID modul tidak valid"))
 		return
 	}
 
 	jenisParam := c.Query("jenis")
 	jenis := model.JenisSoal(jenisParam)
 	if jenisParam != "" && jenis != model.JenisSoalHarian && jenis != model.JenisSoalUTS && jenis != model.JenisSoalUAS {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Query param 'jenis' wajib salah satu dari: harian, uts, uas"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "Query param 'jenis' wajib: harian, uts, atau uas"))
 		return
 	}
 
 	soalList, err := h.service.GetByModulIDAndJenis(uint(modulID), guruID, jenis)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, appErrors.NewClientError(
+			appErrors.CodeForbidden, err.Error()))
 		return
 	}
 
@@ -236,17 +266,18 @@ func (h *SoalHandler) GetSoalByModulForGuru(c *gin.Context) {
 	})
 }
 
-// CreateSoalManual — POST /api/v1/modul/:id/soal/manual
 func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Token guru tidak valid"))
 		return
 	}
 
 	modulID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID modul tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID modul tidak valid"))
 		return
 	}
 
@@ -260,7 +291,8 @@ func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
 		KunciJawaban string `json:"kunci_jawaban" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (jenis, pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeMissingField, "Semua field (jenis, pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"))
 		return
 	}
 
@@ -271,7 +303,8 @@ func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
 		req.KunciJawaban,
 	)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidRequest, err.Error()))
 		return
 	}
 
@@ -281,17 +314,18 @@ func (h *SoalHandler) CreateSoalManual(c *gin.Context) {
 	})
 }
 
-// UpdateSoal — PUT /api/v1/soal/:id
 func (h *SoalHandler) UpdateSoal(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Token guru tidak valid"))
 		return
 	}
 
 	soalID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID soal tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID soal tidak valid"))
 		return
 	}
 
@@ -305,7 +339,8 @@ func (h *SoalHandler) UpdateSoal(c *gin.Context) {
 		KunciJawaban string `json:"kunci_jawaban" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Semua field (pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeMissingField, "Semua field (pertanyaan, pilihan A-D, kunci jawaban) wajib diisi"))
 		return
 	}
 
@@ -315,7 +350,8 @@ func (h *SoalHandler) UpdateSoal(c *gin.Context) {
 		req.KunciJawaban, model.JenisSoal(req.Jenis),
 	)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidRequest, err.Error()))
 		return
 	}
 
@@ -325,22 +361,24 @@ func (h *SoalHandler) UpdateSoal(c *gin.Context) {
 	})
 }
 
-// DeleteSoal — DELETE /api/v1/soal/:id
 func (h *SoalHandler) DeleteSoal(c *gin.Context) {
 	guruID, ok := getUintFromContext(c, "guru_id")
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, appErrors.NewClientError(
+			appErrors.CodeUnauthorized, "Token guru tidak valid"))
 		return
 	}
 
 	soalID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID soal tidak valid"})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidFormat, "ID soal tidak valid"))
 		return
 	}
 
 	if err := h.service.Delete(uint(soalID), guruID); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, appErrors.NewClientError(
+			appErrors.CodeInvalidRequest, err.Error()))
 		return
 	}
 

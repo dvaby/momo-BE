@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"momo-be/internal/errors"
 	"momo-be/pkg/jwtutil"
 )
 
@@ -14,14 +15,16 @@ func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token tidak ditemukan. Silakan login kembali.", "code": "TOKEN_MISSING"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeUnauthorized, "Token tidak ditemukan. Silakan login terlebih dahulu."))
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Format header Authorization harus 'Bearer <token>'", "code": "TOKEN_INVALID_FORMAT"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeInvalidFormat, "Format header Authorization harus 'Bearer <token>'"))
 			c.Abort()
 			return
 		}
@@ -32,17 +35,15 @@ func AuthMiddleware() gin.HandlerFunc {
 			if strings.Contains(err.Error(), "expired") {
 				errMsg = "Sesi Anda telah berakhir. Silakan login kembali."
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg, "code": "TOKEN_INVALID"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeUnauthorized, errMsg))
 			c.Abort()
 			return
 		}
 
-		// PENJAGA ROLE: token guru tidak boleh masuk endpoint siswa
 		if claims.SiswaID == 0 {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Endpoint ini khusus siswa. Token Anda bukan token siswa.",
-				"code":  "TOKEN_WRONG_ROLE",
-			})
+			c.JSON(http.StatusForbidden, errors.NewClientError(
+				errors.CodeForbidden, "Endpoint ini khusus siswa. Token Anda bukan token siswa."))
 			c.Abort()
 			return
 		}
@@ -58,14 +59,16 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token tidak ditemukan. Silakan login kembali.", "code": "TOKEN_MISSING"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeUnauthorized, "Token tidak ditemukan. Silakan login terlebih dahulu."))
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Format header Authorization harus 'Bearer <token>'", "code": "TOKEN_INVALID_FORMAT"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeInvalidFormat, "Format header Authorization harus 'Bearer <token>'"))
 			c.Abort()
 			return
 		}
@@ -76,17 +79,15 @@ func GuruAuthMiddleware() gin.HandlerFunc {
 			if strings.Contains(err.Error(), "expired") {
 				errMsg = "Sesi Anda telah berakhir. Silakan login kembali."
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": errMsg, "code": "TOKEN_INVALID"})
+			c.JSON(http.StatusUnauthorized, errors.NewClientError(
+				errors.CodeUnauthorized, errMsg))
 			c.Abort()
 			return
 		}
 
-		// PENJAGA ROLE: token siswa tidak boleh masuk endpoint guru
 		if claims.GuruID == 0 {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Endpoint ini khusus guru. Token Anda bukan token guru.",
-				"code":  "TOKEN_WRONG_ROLE",
-			})
+			c.JSON(http.StatusForbidden, errors.NewClientError(
+				errors.CodeForbidden, "Endpoint ini khusus guru. Token Anda bukan token guru."))
 			c.Abort()
 			return
 		}
