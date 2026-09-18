@@ -1434,7 +1434,302 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
   -d '{"nama":"Kelas SSE Test","mata_pelajaran":"Fisika"}'
 ```
+---
 
+# 📡 Unified Stream (Server-Sent Events)
+
+## Overview
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/stream` |
+| **Method** | GET (Server-Sent Events) |
+| **Auth** | Bearer Token (Guru atau Siswa) |
+| **Base URL** | `https://momo-be-production.up.railway.app/api/v1` |
+| **Scope** | Role-aware: event difilter berdasarkan role token |
+
+Satu koneksi stream untuk semua update async (materi ready, soal ready, jawaban submitted). Menggantikan kebutuhan polling dari frontend.
+
+## Authentication
+
+Kirim token di header:
+
+```
+Authorization: Bearer <token_guru_atau_siswa>
+```
+
+Sumber token:
+- **Guru:** `POST /api/v1/guru/login` → `.data.token`
+- **Siswa:** `POST /api/v1/join` → `.token`
+
+Response tanpa token / token invalid: `401` dengan body `{"code":"TOKEN_MISSING"|"TOKEN_INVALID","error":"..."}`
+
+## Event Catalog
+
+### 1. `connected` — Welcome Event
+
+- **Trigger:** saat client pertama kali connect
+- **Scope:** semua role (guru + siswa)
+
+```
+event: connected
+data: {"message":"Terhubung ke stream Momo","role":"guru","time":"2026-09-17T08:32:27Z"}
+```
+
+### 2. `materi-ready`
+
+- **Trigger:** setelah guru upload PDF materi dan AI selesai ekstraksi
+- **Scope:** guru only
+
+```
+event: materi-ready
+data: {"modul_id":3,"jumlah":5}
+```
+
+**FE action:** refresh list materi untuk `modul_id` tersebut.
+
+### 3. `soal-ready`
+
+- **Trigger:** setelah guru upload PDF soal dan AI selesai ekstraksi
+- **Scope:** guru only
+
+```
+event: soal-ready
+data: {"modul_id":3,"jenis":"uts","jumlah":10}
+```
+
+Field `jenis`: `harian` | `uts` | `uas`
+
+**FE action:** refresh list soal untuk `modul_id` + `jenis` tersebut.
+
+### 4. `jawaban-submitted`
+
+- **Trigger:** setelah siswa submit jawaban dan AI selesai evaluasi
+- **Scope:** guru only
+
+```
+event: jawaban-submitted
+data: {"siswa_id":42,"soal_id":88,"benar":true}
+```
+
+**FE action:** update statistik/rekap nilai real-time (opsional).
+
+### 5. `heartbeat` — Keep-Alive
+
+- **Trigger:** setiap 15 detik
+- **Scope:** semua role
+
+```
+: heartbeat
+```
+
+**FE action:** tidak perlu apa-apa; ini comment SSE untuk menjaga koneksi hidup.
+
+## Ringkasan Event per Role
+
+| Event | Guru | Siswa |
+|---|:---:|:---:|
+| `connected` | ✅ | ✅ |
+| `heartbeat` | ✅ | ✅ |
+| `materi-ready` | ✅ | ❌ |
+| `soal-ready` | ✅ | ❌ |
+| `jawaban-submitted` | ✅ | ❌ |
+
+## Client Implementation
+
+> ⚠️ `EventSource` bawaan browser **tidak support custom header**, jadi gunakan `fetch` + `ReadableStream` seperti contoh di bawah.
+
+### Vanilla JavaScript
+
+```javascript
+class MomoStream {
+  constructor(token, baseURL = 'https://momo-be-production.up.railway.app/api/v1') {
+    this.token = token;
+    this.baseURL = baseURL;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectDelay = 1000;
+    this.listeners = {};
+  }
+
+  async connect() {
+    try {
+      const response = await fetch(`${this.baseURL}/stream`, {
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+          'Accept': 'text/event-stream',
+        },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop();
+        for (const msg of chunks) {
+          if (msg.trim()) this.parseMessage(msg);
+        }
+      }
+      this.handleDisconnect();
+    } catch (error) {
+      this.emit('error', { error: error.message });
+      this.handleDisconnect();
+    }
+  }
+
+  parseMessage(message) {
+    let eventType = 'message';
+    let data = '';
+    for (const line of message.split('\n')) {
+      if (line.startsWith('event: ')) eventType = line.slice(7);
+      else if (line.startsWith('data: ')) data = line.slice(6);
+      else if (line.startsWith(': ')) return; // heartbeat comment
+    }
+    if (data) {
+      try { this.emit(eventType, JSON.parse(data)); }
+      catch (e) { console.warn('Unparseable event data:', data); }
+    }
+  }
+
+  emit(type, data) {
+    (this.listeners[type] || []).forEach(cb => cb(data));
+  }
+
+  on(type, cb) {
+    (this.listeners[type] = this.listeners[type] || []).push(cb);
+  }
+
+  handleDisconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = this.reconnectDelay * 2 ** (this.reconnectAttempts - 1);
+      setTimeout(() => this.connect(), delay);
+    }
+  }
+
+  disconnect() {
+    this.reconnectAttempts = this.maxReconnectAttempts;
+  }
+}
+
+// --- Usage ---
+const stream = new MomoStream(localStorage.getItem('token'));
+
+stream.on('connected', d => console.log('Connected:', d));
+stream.on('soal-ready', d => refreshSoalList(d.modul_id, d.jenis));
+stream.on('materi-ready', d => refreshMateriList(d.modul_id));
+stream.on('jawaban-submitted', d => updateRekapNilai(d));
+stream.on('error', d => console.error('Stream error:', d.error));
+
+stream.connect();
+```
+
+### React Hook
+
+```javascript
+import { useEffect, useRef } from 'react';
+
+export function useMomoStream(token, callbacks = {}) {
+  const streamRef = useRef(null);
+
+  useEffect(() => {
+    if (!token) return;
+    const stream = new MomoStream(token);
+    streamRef.current = stream;
+    Object.entries(callbacks).forEach(([event, cb]) => stream.on(event, cb));
+    stream.connect();
+    return () => stream.disconnect();
+  }, [token]);
+
+  return streamRef.current;
+}
+
+// --- Usage ---
+function GuruDashboard({ token, modulId }) {
+  useMomoStream(token, {
+    'soal-ready': d => { if (d.modul_id === modulId) fetchSoalList(modulId); },
+    'materi-ready': d => { if (d.modul_id === modulId) fetchMateriList(modulId); },
+  });
+  return <div>{/* dashboard UI */}</div>;
+}
+```
+
+## Error Handling & Best Practices
+
+### Token expired → redirect login
+
+```javascript
+stream.on('error', d => {
+  if (/token|unauthorized/i.test(d.error)) window.location.href = '/login';
+});
+```
+
+### Debounce refresh (hindari spam request saat banyak event)
+
+```javascript
+let t = null;
+stream.on('soal-ready', d => {
+  clearTimeout(t);
+  t = setTimeout(() => refreshSoalList(d.modul_id, d.jenis), 500);
+});
+```
+
+### Notifikasi user
+
+```javascript
+stream.on('soal-ready', d =>
+  showNotification(`${d.jumlah} soal baru berhasil diproses!`, 'success'));
+```
+
+## Testing
+
+### cURL
+
+```bash
+curl -N -H "Authorization: Bearer $TOKEN_GURU" \
+  https://momo-be-production.up.railway.app/api/v1/stream
+```
+
+### Browser Console
+
+```javascript
+fetch('https://momo-be-production.up.railway.app/api/v1/stream', {
+  headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+}).then(r => {
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  (function read() {
+    reader.read().then(({ done, value }) => {
+      if (done) return;
+      console.log(dec.decode(value));
+      read();
+    });
+  })();
+});
+```
+
+## Perilaku Koneksi
+
+| Aspek | Nilai |
+|---|---|
+| Heartbeat interval | 15 detik |
+| Reconnect strategy | Exponential backoff (1s → 2s → 4s → 8s → 16s) |
+| Max reconnect attempts | 5 |
+| Connection per user | 1 (disarankan) |
+| Buffer event per client | 50 event (event lama dibuang jika client lambat) |
+
+## Notes
+
+- Event difilter per role: token siswa hanya menerima event scope siswa, token guru menerima event scope guru.
+- `soal-ready`, `materi-ready`, `jawaban-submitted` saat ini hanya di-broadcast ke scope **guru**.
+- Stream tidak mengirim riwayat event lama — hanya event yang terjadi setelah client connect.
+- Untuk data awal (initial load), tetap gunakan endpoint REST biasa; stream hanya untuk update real-time.
 ---
 
 ## G. Lampiran: Endpoint Debug
