@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"momo-be/internal/job"
@@ -18,16 +19,16 @@ type MateriService struct {
 	repo        *repository.MateriRepository
 	modulRepo   repository.ModulRepository
 	aiClient    *aiclient.Client
-	jobRegistry *job.Registry // BARU
-	callbackURL string        // BARU
+	jobRegistry *job.Registry
+	callbackURL string
 }
 
 func NewMateriService(
 	repo *repository.MateriRepository,
 	modulRepo repository.ModulRepository,
 	aiClient *aiclient.Client,
-	jobRegistry *job.Registry, // BARU
-	callbackURL string, // BARU
+	jobRegistry *job.Registry,
+	callbackURL string,
 ) *MateriService {
 	return &MateriService{
 		repo:        repo,
@@ -89,6 +90,13 @@ func (s *MateriService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int,
 	return nil, fmt.Errorf("response AI Service tidak dikenali")
 }
 
+// processMateriChunkResult adalah hasil dari satu chunk (untuk aggregation parallel)
+type processMateriChunkResult struct {
+	chunkIdx int
+	materi   []model.Materi
+	err      error
+}
+
 func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) ([]model.Materi, error) {
 	teksMentah, err := pdfworker.ExtractText(pdfFilePath)
 	if err != nil {
@@ -98,39 +106,72 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 	konteks := s.rakitKonteks(modulID)
 	chunks := textutil.ChunkText(teksMentah, 3000, 500)
 
-	var materiList []model.Materi
-	urutanCounter := 1
-	chunkGagal := 0
+	log.Printf("[materi] memulai parallel processing %d chunks", len(chunks))
+
+	// PARALLEL: spawn goroutine per chunk
+	results := make(chan processMateriChunkResult, len(chunks))
+	var wg sync.WaitGroup
 
 	for i, chunk := range chunks {
-		log.Printf("[materi] memproses chunk %d/%d (%d karakter)", i+1, len(chunks), len(chunk))
+		wg.Add(1)
+		go func(idx int, chunkText string) {
+			defer wg.Done()
 
-		materiItems, err := s.prosesSatuChunk(chunk, i+1, len(chunks), konteks)
-		if err != nil {
-			log.Printf("[materi] warning: chunk %d gagal: %v", i+1, err)
+			log.Printf("[materi] [goroutine %d/%d] memproses chunk (%d karakter)", idx+1, len(chunks), len(chunkText))
+
+			materiItems, err := s.prosesSatuChunk(chunkText, idx+1, len(chunks), konteks)
+			if err != nil {
+				log.Printf("[materi] [goroutine %d] gagal: %v", idx+1, err)
+				results <- processMateriChunkResult{chunkIdx: idx + 1, err: err}
+				return
+			}
+
+			// Convert ke model.Materi (tanpa urutan untuk sekarang, akan di-set setelah)
+			var materiList []model.Materi
+			for _, item := range materiItems {
+				materiList = append(materiList, model.Materi{
+					ModulID: modulID,
+					Judul:   item.Judul,
+					Konten:  item.Konten,
+				})
+			}
+
+			results <- processMateriChunkResult{chunkIdx: idx + 1, materi: materiList}
+		}(i, chunk)
+	}
+
+	// Close channel setelah semua goroutine selesai
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Kumpulkan hasil dari semua goroutine
+	var materiList []model.Materi
+	chunkGagal := 0
+
+	for res := range results {
+		if res.err != nil {
 			chunkGagal++
 			continue
 		}
+		materiList = append(materiList, res.materi...)
+	}
 
-		for _, item := range materiItems {
-			materiList = append(materiList, model.Materi{
-				ModulID: modulID,
-				Urutan:  urutanCounter,
-				Judul:   item.Judul,
-				Konten:  item.Konten,
-			})
-			urutanCounter++
-		}
+	// Set urutan setelah semua materi terkumpul (karena parallel tidak bisa predict urutan)
+	for i := range materiList {
+		materiList[i].Urutan = i + 1
 	}
 
 	if len(materiList) == 0 {
-		return nil, fmt.Errorf("AI Service tidak menemukan konten materi yang valid dari PDF ini — pastikan PDF berisi materi pembelajaran, bukan soal (chunk gagal: %d/%d)", chunkGagal, len(chunks))
+		return nil, fmt.Errorf("AI Service tidak menemukan materi valid (chunk gagal: %d/%d)", chunkGagal, len(chunks))
 	}
 
 	if err := s.repo.CreateBatch(materiList); err != nil {
-		return nil, fmt.Errorf("gagal menyimpan materi ke database: %w", err)
+		return nil, fmt.Errorf("gagal menyimpan materi: %w", err)
 	}
 
+	log.Printf("[materi] parallel processing selesai: %d materi dari %d chunks (gagal: %d)", len(materiList), len(chunks), chunkGagal)
 	return materiList, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"momo-be/internal/job"
@@ -19,8 +20,8 @@ type SoalService struct {
 	kelasRepo   *repository.KelasRepository
 	modulRepo   repository.ModulRepository
 	aiClient    *aiclient.Client
-	jobRegistry *job.Registry // BARU
-	callbackURL string        // BARU
+	jobRegistry *job.Registry
+	callbackURL string
 }
 
 func NewSoalService(
@@ -28,8 +29,8 @@ func NewSoalService(
 	kelasRepo *repository.KelasRepository,
 	modulRepo repository.ModulRepository,
 	aiClient *aiclient.Client,
-	jobRegistry *job.Registry, // BARU
-	callbackURL string, // BARU
+	jobRegistry *job.Registry,
+	callbackURL string,
 ) *SoalService {
 	return &SoalService{
 		repo:        repo,
@@ -49,7 +50,6 @@ func (s *SoalService) ValidateModulOwnership(modulID uint, guruID uint) error {
 	return nil
 }
 
-// rakitKonteks buat string konteks untuk AI Service (inferensi jenjang)
 func (s *SoalService) rakitKonteks(modulID uint) string {
 	modul, err := s.modulRepo.FindByID(modulID)
 	if err != nil {
@@ -58,8 +58,6 @@ func (s *SoalService) rakitKonteks(modulID uint) string {
 	return fmt.Sprintf("Modul: %s", modul.Nama)
 }
 
-// prosesSatuChunk kirim 1 chunk ke AI Service via sync-via-callback pattern.
-// Return list soal yang berhasil diekstrak dari chunk ini.
 func (s *SoalService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int, konteks string) ([]aiclient.SoalItem, error) {
 	jobID := job.GenerateID("soal")
 	s.jobRegistry.Register(jobID, job.JobTypeSoal, 0, "", "")
@@ -69,7 +67,6 @@ func (s *SoalService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int, k
 		return nil, fmt.Errorf("gagal menghubungi AI Service: %w", err)
 	}
 
-	// Pola baru (ack) — tunggu callback
 	if result.Ack != nil {
 		log.Printf("[soal] chunk %d/%d: ack diterima, menunggu callback...", chunkIdx, totalChunks)
 		finished := s.jobRegistry.WaitSync(jobID, 150*time.Second)
@@ -86,7 +83,6 @@ func (s *SoalService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int, k
 		return soalItems, nil
 	}
 
-	// Pola lama (response langsung) — fallback untuk AI Service versi lama
 	if result.ProcessResult != nil {
 		if !result.ProcessResult.Success {
 			return nil, fmt.Errorf("AI Service gagal: %s", result.ProcessResult.Message)
@@ -95,6 +91,13 @@ func (s *SoalService) prosesSatuChunk(chunk string, chunkIdx, totalChunks int, k
 	}
 
 	return nil, fmt.Errorf("response AI Service tidak dikenali")
+}
+
+// processChunkResult adalah hasil dari satu chunk (untuk aggregation parallel)
+type processChunkResult struct {
+	chunkIdx int
+	soal     []model.Soal
+	err      error
 }
 
 func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pdfFilePath string, guruID uint) ([]model.Soal, error) {
@@ -110,31 +113,61 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	konteks := s.rakitKonteks(modulID)
 	chunks := textutil.ChunkText(teksMentah, 3000, 500)
 
+	log.Printf("[soal] memulai parallel processing %d chunks", len(chunks))
+
+	// PARALLEL: spawn goroutine per chunk
+	results := make(chan processChunkResult, len(chunks))
+	var wg sync.WaitGroup
+
+	for i, chunk := range chunks {
+		wg.Add(1)
+		go func(idx int, chunkText string) {
+			defer wg.Done()
+
+			log.Printf("[soal] [goroutine %d/%d] memproses chunk (%d karakter)", idx+1, len(chunks), len(chunkText))
+
+			soalItems, err := s.prosesSatuChunk(chunkText, idx+1, len(chunks), konteks)
+			if err != nil {
+				log.Printf("[soal] [goroutine %d] gagal: %v", idx+1, err)
+				results <- processChunkResult{chunkIdx: idx + 1, err: err}
+				return
+			}
+
+			// Convert ke model.Soal
+			var soalList []model.Soal
+			for _, item := range soalItems {
+				soalList = append(soalList, model.Soal{
+					ModulID:      modulID,
+					Jenis:        jenis,
+					Pertanyaan:   item.Pertanyaan,
+					PilihanA:     item.PilihanA,
+					PilihanB:     item.PilihanB,
+					PilihanC:     item.PilihanC,
+					PilihanD:     item.PilihanD,
+					KunciJawaban: item.KunciJawaban,
+				})
+			}
+
+			results <- processChunkResult{chunkIdx: idx + 1, soal: soalList}
+		}(i, chunk)
+	}
+
+	// Close channel setelah semua goroutine selesai
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Kumpulkan hasil dari semua goroutine
 	var soalList []model.Soal
 	chunkGagal := 0
 
-	for i, chunk := range chunks {
-		log.Printf("[soal] memproses chunk %d/%d (%d karakter)", i+1, len(chunks), len(chunk))
-
-		soalItems, err := s.prosesSatuChunk(chunk, i+1, len(chunks), konteks)
-		if err != nil {
-			log.Printf("[soal] warning: chunk %d gagal: %v", i+1, err)
+	for res := range results {
+		if res.err != nil {
 			chunkGagal++
 			continue
 		}
-
-		for _, item := range soalItems {
-			soalList = append(soalList, model.Soal{
-				ModulID:      modulID,
-				Jenis:        jenis,
-				Pertanyaan:   item.Pertanyaan,
-				PilihanA:     item.PilihanA,
-				PilihanB:     item.PilihanB,
-				PilihanC:     item.PilihanC,
-				PilihanD:     item.PilihanD,
-				KunciJawaban: item.KunciJawaban,
-			})
-		}
+		soalList = append(soalList, res.soal...)
 	}
 
 	if len(soalList) == 0 {
@@ -145,6 +178,7 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		return nil, fmt.Errorf("gagal menyimpan soal ke database: %w", err)
 	}
 
+	log.Printf("[soal] parallel processing selesai: %d soal dari %d chunks (gagal: %d)", len(soalList), len(chunks), chunkGagal)
 	return soalList, nil
 }
 
@@ -188,9 +222,14 @@ func (s *SoalService) CreateManual(modulID uint, guruID uint, jenis model.JenisS
 	}
 
 	soal := &model.Soal{
-		ModulID: modulID, Jenis: jenis,
-		Pertanyaan: pertanyaan, PilihanA: pilihanA, PilihanB: pilihanB,
-		PilihanC: pilihanC, PilihanD: pilihanD, KunciJawaban: kunciJawaban,
+		ModulID:      modulID,
+		Jenis:        jenis,
+		Pertanyaan:   pertanyaan,
+		PilihanA:     pilihanA,
+		PilihanB:     pilihanB,
+		PilihanC:     pilihanC,
+		PilihanD:     pilihanD,
+		KunciJawaban: kunciJawaban,
 	}
 	if err := s.repo.Create(soal); err != nil {
 		return nil, fmt.Errorf("gagal menyimpan soal: %w", err)
