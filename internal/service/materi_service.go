@@ -104,11 +104,12 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 	}
 
 	konteks := s.rakitKonteks(modulID)
-	chunks := textutil.ChunkText(teksMentah, 3000, 500)
+	
+	// SMART CHUNKING: distribute karakter lebih merata
+	chunks := textutil.SmartChunkText(teksMentah, 4, 1500, 2500)
+	
+	log.Printf("[materi] smart chunking: %d chunks, sizes: %v", len(chunks), getChunkSizesMateri(chunks))
 
-	log.Printf("[materi] memulai parallel processing %d chunks", len(chunks))
-
-	// PARALLEL: spawn goroutine per chunk
 	results := make(chan processMateriChunkResult, len(chunks))
 	var wg sync.WaitGroup
 
@@ -126,7 +127,6 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 				return
 			}
 
-			// Convert ke model.Materi (tanpa urutan untuk sekarang, akan di-set setelah)
 			var materiList []model.Materi
 			for _, item := range materiItems {
 				materiList = append(materiList, model.Materi{
@@ -140,13 +140,11 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		}(i, chunk)
 	}
 
-	// Close channel setelah semua goroutine selesai
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Kumpulkan hasil dari semua goroutine
 	var materiList []model.Materi
 	chunkGagal := 0
 
@@ -158,7 +156,6 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 		materiList = append(materiList, res.materi...)
 	}
 
-	// Set urutan setelah semua materi terkumpul (karena parallel tidak bisa predict urutan)
 	for i := range materiList {
 		materiList[i].Urutan = i + 1
 	}
@@ -173,6 +170,15 @@ func (s *MateriService) ProcessAndSaveMateri(modulID uint, pdfFilePath string) (
 
 	log.Printf("[materi] parallel processing selesai: %d materi dari %d chunks (gagal: %d)", len(materiList), len(chunks), chunkGagal)
 	return materiList, nil
+}
+
+// Helper function untuk logging chunk sizes
+func getChunkSizesMateri(chunks []string) []int {
+	sizes := make([]int, len(chunks))
+	for i, chunk := range chunks {
+		sizes[i] = len(chunk)
+	}
+	return sizes
 }
 
 // --- Method-method di bawah TIDAK BERUBAH ---

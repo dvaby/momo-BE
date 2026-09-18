@@ -111,9 +111,12 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 	}
 
 	konteks := s.rakitKonteks(modulID)
-	chunks := textutil.ChunkText(teksMentah, 3000, 500)
-
-	log.Printf("[soal] memulai parallel processing %d chunks", len(chunks))
+	
+	// SMART CHUNKING: distribute karakter lebih merata untuk optimal parallel
+	// Target: 4 chunks, min 1500 chars, max 2500 chars per chunk
+	chunks := textutil.SmartChunkText(teksMentah, 4, 1500, 2500)
+	
+	log.Printf("[soal] smart chunking: %d chunks, sizes: %v", len(chunks), getChunkSizes(chunks))
 
 	// PARALLEL: spawn goroutine per chunk
 	results := make(chan processChunkResult, len(chunks))
@@ -133,7 +136,6 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 				return
 			}
 
-			// Convert ke model.Soal
 			var soalList []model.Soal
 			for _, item := range soalItems {
 				soalList = append(soalList, model.Soal{
@@ -152,13 +154,11 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 		}(i, chunk)
 	}
 
-	// Close channel setelah semua goroutine selesai
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Kumpulkan hasil dari semua goroutine
 	var soalList []model.Soal
 	chunkGagal := 0
 
@@ -180,6 +180,15 @@ func (s *SoalService) ProcessAndSaveSoal(modulID uint, jenis model.JenisSoal, pd
 
 	log.Printf("[soal] parallel processing selesai: %d soal dari %d chunks (gagal: %d)", len(soalList), len(chunks), chunkGagal)
 	return soalList, nil
+}
+
+// Helper function untuk logging chunk sizes
+func getChunkSizes(chunks []string) []int {
+	sizes := make([]int, len(chunks))
+	for i, chunk := range chunks {
+		sizes[i] = len(chunk)
+	}
+	return sizes
 }
 
 // --- Method-method di bawah TIDAK BERUBAH ---
