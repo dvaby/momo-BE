@@ -72,13 +72,15 @@ func SetupRouter(
 
 		// ==================== SISWA ENDPOINTS ====================
 		siswaAuth := api.Group("")
-		siswaAuth.Use(middleware.AuthMiddleware())
-		{
-			siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
-			siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
-			siswaAuth.GET("/siswa/kelas-saya", siswaHandler.GetKelasSaya)
-			siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
-		}
+	siswaAuth.Use(middleware.AuthMiddleware())
+	{
+	siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
+	siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)
+	siswaAuth.GET("/siswa/kelas-saya", siswaHandler.GetKelasSaya)
+	siswaAuth.GET("/siswa/modul/:id", siswaHandler.GetModulDetailForSiswa)   // BARU: detail modul untuk siswa
+	siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
+	siswaAuth.GET("/siswa/modul/:id/soal", soalHandler.GetSoalByModul)       // BARU: alias soal untuk siswa
+}
 
 		// ==================== GURU ENDPOINTS ====================
 		guruAuth := api.Group("")
