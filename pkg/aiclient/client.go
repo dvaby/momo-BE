@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"io"
 )
 
 type Client struct {
@@ -198,4 +199,57 @@ func (c *Client) EvaluateAnswerWithJob(req EvaluateRequest) (*DualModeResult, er
 	}
 
 	return nil, fmt.Errorf("response AI Service tidak dikenali")
+}
+// ============================================================
+// METHOD BARU — MODE TUTOR (FASE 2)
+//
+// Fire-and-forget ke AI Service: kirim request tutor, AI akan callback.
+// ============================================================
+
+// SubmitTutor kirim request tutor ke AI Service endpoint /process dengan tipe=tutor.
+// Return error hanya kalau gagal kirim. Sukses = AI akan callback nanti.
+func (c *Client) SubmitTutor(jobID, callbackURL, pesanSiswa, konteks string) error {
+	reqBody := ProcessRequest{
+		Tipe:        "tutor",
+		TeksMentah:  pesanSiswa,
+		JobID:       jobID,
+		CallbackURL: callbackURL,
+		Konteks:     konteks,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("gagal encode request: %w", err)
+	}
+
+	url := c.baseURL + "/process"
+	resp, err := c.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("gagal menghubungi AI Service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 422 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("AI Service reject tutor request: %s", string(body))
+	}
+
+	if resp.StatusCode != 200 && resp.StatusCode != 202 {
+		return fmt.Errorf("AI Service return status %d", resp.StatusCode)
+	}
+
+	// Parse ACK response
+	var ack struct {
+		Accepted bool   `json:"accepted"`
+		JobID    string `json:"job_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
+		return fmt.Errorf("gagal decode ACK response: %w", err)
+	}
+
+	if !ack.Accepted {
+		return fmt.Errorf("AI Service tidak menerima job tutor")
+	}
+
+	return nil
 }

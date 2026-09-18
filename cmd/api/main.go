@@ -78,25 +78,30 @@ func main() {
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService, unifiedHub)
 
 	nilaiRepo := repository.NewNilaiRepository(db)
-	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
-	nilaiHandler := handler.NewNilaiHandler(nilaiService)
+nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
+nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
-	// Handler callback AI
-	aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken)
+// BARU: Tutor service untuk Mode Tutor Fase 2
+tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL)
+tutorHandler := handler.NewTutorHandler(tutorService)
+
+// Handler callback AI (tambah unifiedHub untuk emit tutor-reply)
+aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken, unifiedHub)
 
 	r := router.SetupRouter(
-		cfg,
-		modulHandler,
-		uploadHandler,
-		materiHandler,
-		soalHandler,
-		kelasHandler,
-		siswaHandler,
-		jawabanSiswaHandler,
-		nilaiHandler,
-		guruHandler,
-		aiCallbackHandler,
-		streamHandler,
-	)
+	cfg,
+	modulHandler,
+	uploadHandler,
+	materiHandler,
+	soalHandler,
+	kelasHandler,
+	siswaHandler,
+	jawabanSiswaHandler,
+	nilaiHandler,
+	guruHandler,
+	aiCallbackHandler,
+	streamHandler,
+	tutorHandler,
+)
 	r.Run(":" + cfg.ServerPort)
 }

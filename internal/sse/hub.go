@@ -24,9 +24,10 @@ const (
 
 // Client adalah subscriber SSE
 type Client struct {
-	Role   Role
-	Events chan Event
-	Done   chan struct{}
+	Role    Role
+	SiswaID uint // BARU: untuk tutor-reply (khusus siswa)
+	Events  chan Event
+	Done    chan struct{}
 }
 
 // Event yang akan di-broadcast
@@ -119,7 +120,7 @@ func (h *Hub) BroadcastToGuru(eventType string, data interface{}) {
 	h.Broadcast(eventType, data, ScopeGuru)
 }
 
-// BroadcastToSiswa kirim event khusus siswa
+// BroadcastToSiswa kirim event khusus siswa (ke semua siswa)
 func (h *Hub) BroadcastToSiswa(eventType string, data interface{}) {
 	h.Broadcast(eventType, data, ScopeSiswa)
 }
@@ -127,6 +128,23 @@ func (h *Hub) BroadcastToSiswa(eventType string, data interface{}) {
 // BroadcastToAll kirim event ke semua role
 func (h *Hub) BroadcastToAll(eventType string, data interface{}) {
 	h.Broadcast(eventType, data, ScopeAll)
+}
+
+// BroadcastToSiswaByID kirim event ke siswa tertentu (untuk tutor-reply).
+// Hanya siswa dengan SiswaID yang cocok yang akan terima event ini.
+func (h *Hub) BroadcastToSiswaByID(eventType string, data interface{}, siswaID uint) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.clients {
+		if client.Role == RoleSiswa && client.SiswaID == siswaID {
+			select {
+			case client.Events <- Event{Type: eventType, Data: data, Scope: ScopeSiswa}:
+			default:
+				// client lambat, skip
+			}
+		}
+	}
 }
 
 // WriteEvent helper menulis event ke ResponseWriter dalam format SSE
