@@ -1,7 +1,7 @@
 # API Reference — Momo-BE
 
 Dokumen ini disusun berdasarkan **testing langsung terhadap kode yang berjalan** (bukan asumsi).
-Versi awal: 1 September 2026 · **Update terakhir: 14 September 2026 (update 4)**.
+Versi awal: 1 September 2026 · **Update terakhir: 18 September 2026 (update 5)**.
 Semua contoh request/response di bawah adalah hasil `curl` nyata terhadap environment production.
 
 ---
@@ -13,9 +13,11 @@ Semua contoh request/response di bawah adalah hasil `curl` nyata terhadap enviro
 - [B. Modul, Materi & Soal](#b-modul-materi--soal)
 - [C. Kelas & Nilai (Token Guru)](#c-kelas--nilai-token-guru)
 - [D. Alur Siswa (Token Siswa)](#d-alur-siswa-token-siswa)
-- [E. Alur Belajar Siswa (14 Sept 2026)](#e-alur-belajar-siswa-14-sept-2026)
-- [F. Real-time Updates / SSE (Token Guru)](#f-real-time-updates--sse-token-guru)
-- [G. Lampiran: Endpoint Debug](#g-lampiran-endpoint-debug)
+- [E. Alur Belajar Siswa](#e-alur-belajar-siswa)
+- [E2. Mode Tutor (18 Sept 2026)](#e2-mode-tutor-18-sept-2026)
+- [F. SSE Legacy: Stream Kelas (Token Guru)](#f-sse-legacy-stream-kelas-token-guru)
+- [G. Unified Stream (Guru + Siswa)](#g-unified-stream-guru--siswa)
+- [H. Lampiran: Endpoint Debug](#h-lampiran-endpoint-debug)
 - [Error Handling](#error-handling)
 - [Known Issues / Catatan untuk FE](#known-issues--catatan-untuk-fe)
 - [Changelog](#changelog)
@@ -40,7 +42,7 @@ Semua contoh request/response di bawah adalah hasil `curl` nyata terhadap enviro
 | Isi claim | `guru_id`, `role: "guru"` | `siswa_id`, `kelas_id` |
 | Masa berlaku | 24 jam | 12 jam |
 | Lokasi di response | `data.token` | `token` (root object) |
-| Berlaku di | Semua endpoint Guru | Hanya endpoint Siswa (`GET /modul/:id/soal`, `POST /submit-jawaban`, `GET /siswa/*`) |
+| Berlaku di | Semua endpoint Guru | Hanya endpoint Siswa (`GET /modul/:id/soal`, `POST /submit-jawaban`, `GET /siswa/*`, `POST /tutor`) |
 
 **Role isolation aktif (14 Sept 2026):**
 - Token Guru dipakai di endpoint siswa → `401` dengan `code: TOKEN_WRONG_ROLE`
@@ -60,7 +62,7 @@ Origin lain → `403 Forbidden`. Request tanpa header `Origin` (server-to-server
 | Limiter | Batas | Diterapkan di |
 |---|---|---|
 | Auth limiter | 5 request / 12 detik per IP | `POST /guru/register`, `POST /guru/login`, `POST /join` |
-| AI limiter | 3 request / 6 detik per IP | `POST /test-extract-pdf`, `POST /submit-jawaban` |
+| AI limiter | 3 request / 6 detik per IP | `POST /test-extract-pdf`, `POST /submit-jawaban`, `POST /tutor` |
 
 Melebihi batas → `429 Too Many Requests`:
 ```json
@@ -69,10 +71,23 @@ Melebihi batas → `429 Too Many Requests`:
 
 ### Format Error Umum
 
+**Format standar baru (18 Sept 2026)** untuk error bisnis di endpoint siswa, tutor, submit-jawaban, dan upload:
+
 ```json
-{ "error": "pesan error dalam bahasa Indonesia" }
+{
+  "code": "NOT_FOUND",
+  "message": "soal dengan ID 999999 tidak ditemukan",
+  "source": "client"
+}
 ```
-Sebagian error menyertakan field `code` untuk penanganan spesifik di FE — lihat [Error Handling](#error-handling).
+
+| Field | Keterangan |
+|---|---|
+| `code` | Kode error stabil untuk logika FE (lihat section Error Handling) |
+| `message` | Pesan bahasa Indonesia, aman ditampilkan langsung ke user |
+| `source` | Penyebab error: `client` (FE salah) \| `ai_service` (AI salah) \| `server` (backend salah) |
+
+⚠️ Middleware stream (`/stream`) masih memakai format lama `{"error":"...","code":"TOKEN_MISSING"}` — FE wajib menangani **kedua bentuk** (cek keberadaan field `source`).
 
 ### Cara Membaca Blok Endpoint
 
@@ -359,7 +374,7 @@ curl -H "Authorization: Bearer $TOKEN_GURU" \
 }
 ```
 ⚠️ Field nama modul di sini bernama **`judul`** (bukan `nama`).
-✅ **Endpoint inilah yang dipakai halaman GURU** untuk preview/polling soal & materi — bukan `GET /modul/:id/soal`.
+✅ **Endpoint inilah yang dipakai halaman GURU** untuk preview soal & materi — bukan `GET /modul/:id/soal`.
 
 **Error (404):**
 ```json
@@ -379,7 +394,7 @@ curl -H "Authorization: Bearer $TOKEN_GURU" \
 | Field | Tipe | Wajib | Keterangan |
 |---|---|---|---|
 | `nama` | string | ❌* | *Minimal `nama` atau `deskripsi` harus diisi |
-| `deskripsi` | string | ❌* | ⚠️ Nilai yang dikirim **selalu menimpa** deskripsi lama |
+| `deskripsi` | string | ❌* | ️ Nilai yang dikirim **selalu menimpa** deskripsi lama |
 
 ```json
 { "nama": "Ipa (Updated)", "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5" }
@@ -628,6 +643,8 @@ Varian pesan lain: `...File PDF tidak bisa dibaca. Pastikan PDF berisi teks, buk
 - **Content-Type:** `multipart/form-data`
 
 🔄 **BREAKING CHANGE (14 Sept 2026):** Endpoint ini sekarang **SYNCHRONOUS** — request ditahan sampai AI selesai mengekstrak soal (biasanya 10–30 detik). FE wajib menampilkan spinner penuh dan **HAPUS semua logic polling**.
+
+⚡ **UPDATE 18 Sept 2026:** Parallel chunk processing aktif — tipikal waktu turun dari 47s → ~23s untuk PDF besar; hingga 20–21 soal terekstrak per PDF kumpulan soal.
 
 **Path parameter:**
 | Param | Tipe | Keterangan |
@@ -885,7 +902,7 @@ curl -X DELETE https://momo-be-production.up.railway.app/api/v1/soal/46 \
 
 ### ⚠️ `GET /api/v1/modul/:id/soal?jenis=uts` — Ambil soal (KHUSUS TOKEN SISWA)
 
-🚫 **TIDAK BOLEK dipanggil dari halaman Guru.** Halaman guru memakai `GET /modul/:id` lalu memfilter array `.soal`.
+🚫 **TIDAK BOLEH dipanggil dari halaman Guru.** Halaman guru memakai `GET /modul/:id` lalu memfilter array `.soal`.
 
 - **Auth:** **Token Siswa** (siswa harus sudah join kelas yang tertaut modul ini)
 
@@ -1239,15 +1256,17 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/submit-jawaban \
 }
 ```
 
-**Error (400):**
+**Error (format standar 18 Sept):**
 ```json
-{ "error": "Anda sudah menjawab soal ini sebelumnya" }
+{ "code": "NOT_FOUND", "message": "soal dengan ID 999999 tidak ditemukan", "source": "client" }
+{ "code": "ALREADY_ANSWERED", "message": "Soal UTS/UAS hanya boleh dijawab sekali", "source": "client" }
+{ "code": "AI_UNAVAILABLE", "message": "Gagal menghubungi AI Service untuk mengevaluasi jawaban. Silakan coba lagi.", "source": "ai_service" }
 ```
 *(Berlaku untuk jenis `uts`/`uas`: satu siswa satu kali per soal. Jenis `harian` boleh berulang.)*
 
 ---
 
-## E. Alur Belajar Siswa (14 Sept 2026)
+## E. Alur Belajar Siswa
 
 Endpoint ini khusus **Token Siswa** dan dirancang untuk mendukung alur belajar interaktif berbasis suara (voice-first) untuk anak tuna netra.
 
@@ -1295,7 +1314,42 @@ curl -H "Authorization: Bearer $TOKEN_SISWA" \
 
 **Error (403):**
 ```json
-{ "error": "akses ditolak: siswa ini bukan anggota kelas" }
+{ "code": "FORBIDDEN", "message": "akses ditolak: siswa ini bukan anggota kelas", "source": "client" }
+```
+
+---
+
+### `GET /api/v1/siswa/modul/:id` — Detail modul untuk siswa 🆕 (18 Sept)
+
+Endpoint ini mengambil detail modul yang **sudah ditugaskan ke kelas siswa**. Berguna untuk header halaman belajar.
+
+**Path parameter:**
+| Param | Tipe | Keterangan |
+|---|---|---|
+| `id` | number | ID modul (harus tertaut ke kelas siswa) |
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_SISWA" \
+  https://momo-be-production.up.railway.app/api/v1/siswa/modul/3
+```
+
+**Response (200):**
+```json
+{
+  "id": 3,
+  "nama": "Ipa",
+  "deskripsi": "Ilmu Pengetahuan Alam untuk Kelas 5",
+  "jumlah_materi": 5,
+  "jumlah_soal": 30,
+  "jenis_soal_tersedia": ["harian", "uts"]
+}
+```
+
+**Error (400 / 403):**
+```json
+{ "code": "INVALID_FORMAT", "message": "ID modul tidak valid", "source": "client" }
+{ "code": "FORBIDDEN", "message": "modul ini tidak ditugaskan untuk kelas Anda", "source": "client" }
 ```
 
 ---
@@ -1335,14 +1389,116 @@ curl -H "Authorization: Bearer $TOKEN_SISWA" \
 
 **Error (400 / 403):**
 ```json
-{ "error": "ID modul tidak valid" }
-{ "error": "modul ini tidak ditugaskan untuk kelas Anda" }
-{ "error": "akses ditolak: siswa ini bukan anggota kelas" }
+{ "code": "INVALID_FORMAT", "message": "ID modul tidak valid", "source": "client" }
+{ "code": "FORBIDDEN", "message": "modul ini tidak ditugaskan untuk kelas Anda", "source": "client" }
 ```
 
 ---
 
-## F. Real-time Updates / SSE (Token Guru)
+### `GET /api/v1/siswa/modul/:id/soal?jenis=harian` — Alias soal untuk siswa 🆕 (18 Sept)
+
+Sama persis dengan `GET /api/v1/modul/:id/soal` (bagian B) — disediakan agar seluruh alur belajar siswa konsisten memakai prefix `/siswa/`.
+
+**curl:**
+```bash
+curl -H "Authorization: Bearer $TOKEN_SISWA" \
+  "https://momo-be-production.up.railway.app/api/v1/siswa/modul/3/soal?jenis=harian"
+```
+
+**Response (200):** identik dengan `GET /modul/:id/soal` (pilihan teracak, tanpa kunci).
+
+---
+
+## E2. Mode Tutor (18 Sept 2026) 🆕
+
+### `POST /api/v1/tutor` — Kirim pesan ke tutor (ASYNC fire-and-forget)
+
+- **Auth:** Token Siswa
+- **Content-Type:** `application/json`
+- **Rate limit:** AI limiter (3 req / 6 detik per IP)
+
+**Body:**
+| Field | Tipe | Wajib | Keterangan |
+|---|---|---|---|
+| `pesan` | string | ✅ | Teks hasil Speech-to-Text dari suara siswa |
+| `kelas_nama` | string | ❌ | Nama kelas untuk personalisasi konteks |
+
+```json
+{ "pesan": "Halo Momo, apa itu getaran dalam fisika?", "kelas_nama": "Kelas 3 Matematika" }
+```
+
+**curl:**
+```bash
+curl -X POST https://momo-be-production.up.railway.app/api/v1/tutor \
+  -H "Authorization: Bearer $TOKEN_SISWA" \
+  -H "Content-Type: application/json" \
+  -d '{"pesan":"Halo Momo, apa itu getaran dalam fisika?","kelas_nama":"Kelas 3 Matematika"}'
+```
+
+**Response (202 Accepted, < 1 detik):**
+```json
+{
+  "message": "Permintaan tutor diterima, balasan akan dikirim via stream",
+  "job_id": "tutor_1789721312376790988_2"
+}
+```
+
+⚠️ **Pola async:** response 202 hanya ACK. Balasan AI TIDAK ada di response ini — ia datang sebagai event `tutor-reply` di stream (5–30 detik kemudian). FE wajib sudah terhubung ke stream sebelum/sesudah mengirim request.
+
+**Error (format standar `{code, message, source}`):**
+```json
+{ "code": "MISSING_FIELD", "message": "Field 'pesan' wajib diisi", "source": "client" }
+{ "code": "UNAUTHORIZED", "message": "Token siswa tidak valid. Silakan login kembali.", "source": "client" }
+{ "code": "AI_UNAVAILABLE", "message": "AI tutor sedang tidak tersedia. Silakan coba lagi dalam beberapa saat.", "source": "ai_service" }
+```
+
+### Karakter balasan AI tutor (jaminan backend + AI Service)
+
+- Maksimal **80 kata** (~400 karakter) — aman untuk TTS
+- **TTS-safe:** tanpa markdown, bullet, emoji, atau simbol kompleks
+- Bahasa Indonesia natural, ramah, memakai analogi auditori/taktil (cocok untuk siswa tuna netra)
+- Contoh balasan nyata dari production:
+  > "Halo! Senang sekali bisa berkenalan dan belajar bareng kamu. Getaran adalah gerakan bolak-balik suatu benda secara teratur melalui titik setimbangnya. Kamu bisa merasakannya saat menempelkan jemari di lehermu sewaktu berbicara, ada gerakan bolak-balik cepat yang terasa di sana."
+
+### Alur FE lengkap (Mode Tutor)
+
+```javascript
+// 1. User bicara → STT → teks
+const teks = await speechToText();
+
+// 2. Kirim ke tutor → ACK < 1 detik
+const res = await fetch(`${BASE}/tutor`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ pesan: teks, kelas_nama: namaKelas }),
+});
+
+if (res.status === 202) {
+  setLoading(true);              // "Sedang Memahami..."
+  setFallbackTimer(35000);       // watchdog: kalau 35s tidak ada event → error message
+  return;                        // balasan ditunggu dari stream, bukan dari sini
+}
+
+// 3. Handle error (401/400/503) → WAJIB setLoading(false) di sini
+handleError(await res.json());
+
+// 4. Di stream listener (dipasang sekali saat halaman study dibuka):
+es.addEventListener('tutor-reply', (e) => {
+  const d = JSON.parse(e.data);
+  clearFallbackTimer();
+  setLoading(false);             // ← stop "Sedang Memahami..."
+  speak(d.balasan);              // TTS bacakan balasan
+});
+```
+
+**Watchdog wajib:** kalau event `tutor-reply` tidak datang dalam 35 detik, stop loading dan ucapkan "Momo terlalu lama merespons, coba lagi ya." Jangan biarkan UI stuck selamanya.
+
+---
+
+## F. SSE Legacy: Stream Kelas (Token Guru)
 
 ### `GET /api/v1/kelas/stream` — Stream event kelas
 
@@ -1375,54 +1531,7 @@ data: {"id":10,"guru_id":7,"nama_kelas":"Kelas SSE Test","mata_pelajaran":"Fisik
 | `kelas-deleted` | Kelas dihapus | `{ "id": <id_kelas> }` |
 | `: heartbeat` | Tiap ±15 detik | Komentar kosong — **abaikan** |
 
-**Implementasi FE** (`EventSource` tidak mendukung header Authorization, pakai `fetch` + `ReadableStream`):
-```javascript
-const connectSSE = () => {
-  const token = localStorage.getItem('token_guru');
-
-  const stream = async () => {
-    const response = await fetch(
-      'https://momo-be-production.up.railway.app/api/v1/kelas/stream',
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split('\n\n');
-      buffer = chunks.pop();
-
-      for (const chunk of chunks) {
-        if (!chunk.trim() || chunk.startsWith(':')) continue; // abaikan heartbeat
-
-        const eventMatch = chunk.match(/^event: (.+)$/m);
-        const dataMatch  = chunk.match(/^data: (.+)$/m);
-        if (!eventMatch || !dataMatch) continue;
-
-        window.dispatchEvent(new CustomEvent('sse-' + eventMatch[1], {
-          detail: JSON.parse(dataMatch[1])
-        }));
-      }
-    }
-  };
-
-  stream();
-};
-
-connectSSE(); // panggil sekali setelah login guru
-
-window.addEventListener('sse-kelas-created', (e) => { /* tambah ke list */ });
-window.addEventListener('sse-kelas-updated', (e) => { /* update item */ });
-window.addEventListener('sse-kelas-deleted', (e) => { /* buang item, id = e.detail.id */ });
-```
-
-**Tips:** retry dengan backoff saat koneksi putus; satu koneksi per tab sudah cukup; SSE hanya untuk event kelas (status soal tetap polling `GET /modul/:id`).
+⚠️ Untuk kebutuhan real-time baru (materi/soal/jawaban/tutor), **gunakan Unified Stream di bagian G** — endpoint legacy ini hanya memuat event kelas.
 
 **curl test:**
 ```bash
@@ -1434,98 +1543,107 @@ curl -X POST https://momo-be-production.up.railway.app/api/v1/kelas \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN_GURU" \
   -d '{"nama":"Kelas SSE Test","mata_pelajaran":"Fisika"}'
 ```
+
 ---
 
-# 📡 Unified Stream (Server-Sent Events)
+## G. Unified Stream (Guru + Siswa)
 
-## Overview
+### Overview
 
 | | |
 |---|---|
 | **Endpoint** | `GET /api/v1/stream` |
 | **Method** | GET (Server-Sent Events) |
-| **Auth** | Bearer Token (Guru atau Siswa) |
-| **Base URL** | `https://momo-be-production.up.railway.app/api/v1` |
+| **Auth** | Token Guru atau Siswa via **header** ATAU **query param** (baru 18 Sept) |
 | **Scope** | Role-aware: event difilter berdasarkan role token |
 
-Satu koneksi stream untuk semua update async (materi ready, soal ready, jawaban submitted). Menggantikan kebutuhan polling dari frontend.
+Satu koneksi stream untuk semua update async. Menggantikan kebutuhan polling.
 
-## Authentication
+### Authentication (2 cara)
 
-Kirim token di header:
-
-```
+**Cara 1 — Header** (untuk fetch-based client):
+```http
 Authorization: Bearer <token_guru_atau_siswa>
+```
+
+**Cara 2 — Query param** 🆕 (18 Sept 2026, untuk `EventSource` native yang tidak support header):
+```
+GET /api/v1/stream?token=<token_guru_atau_siswa>
 ```
 
 Sumber token:
 - **Guru:** `POST /api/v1/guru/login` → `.data.token`
 - **Siswa:** `POST /api/v1/join` → `.token`
 
-Response tanpa token / token invalid: `401` dengan body `{"code":"TOKEN_MISSING"|"TOKEN_INVALID","error":"..."}`
+Response tanpa token / token invalid: `401` dengan body `{"error":"...","code":"TOKEN_MISSING"|"TOKEN_INVALID"}`
 
-## Event Catalog
+### Event Catalog
 
-### 1. `connected` — Welcome Event
-
+#### 1. `connected` — Welcome Event
 - **Trigger:** saat client pertama kali connect
-- **Scope:** semua role (guru + siswa)
+- **Scope:** semua role
 
-```
+```text
 event: connected
-data: {"message":"Terhubung ke stream Momo","role":"guru","time":"2026-09-17T08:32:27Z"}
+data: {"message":"Terhubung ke stream Momo","role":"siswa","time":"2026-09-18T08:48:25Z"}
 ```
 
-### 2. `materi-ready`
-
+#### 2. `materi-ready`
 - **Trigger:** setelah guru upload PDF materi dan AI selesai ekstraksi
 - **Scope:** guru only
 
-```
+```text
 event: materi-ready
 data: {"modul_id":3,"jumlah":5}
 ```
-
 **FE action:** refresh list materi untuk `modul_id` tersebut.
 
-### 3. `soal-ready`
-
+#### 3. `soal-ready`
 - **Trigger:** setelah guru upload PDF soal dan AI selesai ekstraksi
 - **Scope:** guru only
 
-```
+```text
 event: soal-ready
 data: {"modul_id":3,"jenis":"uts","jumlah":10}
 ```
-
-Field `jenis`: `harian` | `uts` | `uas`
-
 **FE action:** refresh list soal untuk `modul_id` + `jenis` tersebut.
 
-### 4. `jawaban-submitted`
-
+#### 4. `jawaban-submitted`
 - **Trigger:** setelah siswa submit jawaban dan AI selesai evaluasi
 - **Scope:** guru only
 
-```
+```text
 event: jawaban-submitted
 data: {"siswa_id":42,"soal_id":88,"benar":true}
 ```
-
 **FE action:** update statistik/rekap nilai real-time (opsional).
 
-### 5. `heartbeat` — Keep-Alive
+#### 5. `tutor-reply` 🆕 (18 Sept 2026)
+- **Trigger:** setelah AI tutor selesai membalas pesan siswa (lihat `POST /api/v1/tutor`)
+- **Scope:** **siswa yang meminta saja** (targeted per siswa, BUKAN broadcast ke semua siswa)
 
+```text
+event: tutor-reply
+data: {"job_id":"tutor_1789721312376790988_2","balasan":"Halo! Getaran adalah gerakan bolak-balik suatu benda..."}
+```
+
+Varian gagal (AI error):
+```text
+event: tutor-reply
+data: {"job_id":"tutor_xxx","balasan":"Maaf, aku sedang mengalami kesulitan. Silakan coba lagi.","error":true}
+```
+**FE action:** stop loading "Sedang Memahami...", bacakan `balasan` dengan TTS.
+
+#### 6. `heartbeat` — Keep-Alive
 - **Trigger:** setiap 15 detik
 - **Scope:** semua role
 
-```
+```text
 : heartbeat
 ```
+**FE action:** tidak perlu apa-apa; ini comment SSE.
 
-**FE action:** tidak perlu apa-apa; ini comment SSE untuk menjaga koneksi hidup.
-
-## Ringkasan Event per Role
+### Ringkasan Event per Role
 
 | Event | Guru | Siswa |
 |---|:---:|:---:|
@@ -1534,12 +1652,29 @@ data: {"siswa_id":42,"soal_id":88,"benar":true}
 | `materi-ready` | ✅ | ❌ |
 | `soal-ready` | ✅ | ❌ |
 | `jawaban-submitted` | ✅ | ❌ |
+| `tutor-reply` | ❌ | ✅ (hanya siswa yang meminta) |
 
-## Client Implementation
+### Client Implementation
 
-> ⚠️ `EventSource` bawaan browser **tidak support custom header**, jadi gunakan `fetch` + `ReadableStream` seperti contoh di bawah.
+#### Opsi 1 — EventSource native + query param (PALING MUDAH) 🆕
 
-### Vanilla JavaScript
+```javascript
+const token = localStorage.getItem('token');
+const es = new EventSource(
+  `https://momo-be-production.up.railway.app/api/v1/stream?token=${token}`
+);
+
+es.addEventListener('connected', e => console.log(JSON.parse(e.data)));
+es.addEventListener('tutor-reply', e => {
+  const d = JSON.parse(e.data);
+  stopLoading();
+  speak(d.balasan); // TTS
+});
+es.addEventListener('soal-ready', e => refreshSoalList(JSON.parse(e.data)));
+es.onerror = () => console.warn('stream putus, EventSource auto-reconnect');
+```
+
+#### Opsi 2 — Fetch-based client + header (class MomoStream)
 
 ```javascript
 class MomoStream {
@@ -1625,114 +1760,34 @@ stream.on('connected', d => console.log('Connected:', d));
 stream.on('soal-ready', d => refreshSoalList(d.modul_id, d.jenis));
 stream.on('materi-ready', d => refreshMateriList(d.modul_id));
 stream.on('jawaban-submitted', d => updateRekapNilai(d));
+stream.on('tutor-reply', d => {
+  stopLoading();
+  speak(d.balasan);
+});
 stream.on('error', d => console.error('Stream error:', d.error));
 
 stream.connect();
 ```
 
-### React Hook
-
-```javascript
-import { useEffect, useRef } from 'react';
-
-export function useMomoStream(token, callbacks = {}) {
-  const streamRef = useRef(null);
-
-  useEffect(() => {
-    if (!token) return;
-    const stream = new MomoStream(token);
-    streamRef.current = stream;
-    Object.entries(callbacks).forEach(([event, cb]) => stream.on(event, cb));
-    stream.connect();
-    return () => stream.disconnect();
-  }, [token]);
-
-  return streamRef.current;
-}
-
-// --- Usage ---
-function GuruDashboard({ token, modulId }) {
-  useMomoStream(token, {
-    'soal-ready': d => { if (d.modul_id === modulId) fetchSoalList(modulId); },
-    'materi-ready': d => { if (d.modul_id === modulId) fetchMateriList(modulId); },
-  });
-  return <div>{/* dashboard UI */}</div>;
-}
-```
-
-## Error Handling & Best Practices
-
-### Token expired → redirect login
-
-```javascript
-stream.on('error', d => {
-  if (/token|unauthorized/i.test(d.error)) window.location.href = '/login';
-});
-```
-
-### Debounce refresh (hindari spam request saat banyak event)
-
-```javascript
-let t = null;
-stream.on('soal-ready', d => {
-  clearTimeout(t);
-  t = setTimeout(() => refreshSoalList(d.modul_id, d.jenis), 500);
-});
-```
-
-### Notifikasi user
-
-```javascript
-stream.on('soal-ready', d =>
-  showNotification(`${d.jumlah} soal baru berhasil diproses!`, 'success'));
-```
-
-## Testing
-
-### cURL
-
-```bash
-curl -N -H "Authorization: Bearer $TOKEN_GURU" \
-  https://momo-be-production.up.railway.app/api/v1/stream
-```
-
-### Browser Console
-
-```javascript
-fetch('https://momo-be-production.up.railway.app/api/v1/stream', {
-  headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-}).then(r => {
-  const reader = r.body.getReader();
-  const dec = new TextDecoder();
-  (function read() {
-    reader.read().then(({ done, value }) => {
-      if (done) return;
-      console.log(dec.decode(value));
-      read();
-    });
-  })();
-});
-```
-
-## Perilaku Koneksi
+### Perilaku Koneksi
 
 | Aspek | Nilai |
 |---|---|
 | Heartbeat interval | 15 detik |
 | Reconnect strategy | Exponential backoff (1s → 2s → 4s → 8s → 16s) |
 | Max reconnect attempts | 5 |
-| Connection per user | 1 (disarankan) |
-| Buffer event per client | 50 event (event lama dibuang jika client lambat) |
+| Buffer event per client | 50 event |
+| Latency tutor-reply | 5–30 detik setelah POST /tutor |
 
-## Notes
+### Notes
 
-- Event difilter per role: token siswa hanya menerima event scope siswa, token guru menerima event scope guru.
-- `soal-ready`, `materi-ready`, `jawaban-submitted` saat ini hanya di-broadcast ke scope **guru**.
-- Stream tidak mengirim riwayat event lama — hanya event yang terjadi setelah client connect.
-- Untuk data awal (initial load), tetap gunakan endpoint REST biasa; stream hanya untuk update real-time.
+- Stream tidak mengirim riwayat event lama — hanya event setelah client connect.
+- Untuk data awal (initial load), tetap pakai endpoint REST; stream hanya untuk update real-time.
+- `tutor-reply` di-route per `siswa_id`: dua siswa berbeda tidak saling menerima balasan tutor masing-masing.
+
 ---
 
-## G. Lampiran: Endpoint Debug
+## H. Lampiran: Endpoint Debug
 
 ### `POST /api/v1/test-extract-pdf` — Uji ekstraksi PDF (debug only)
 
@@ -1752,6 +1807,7 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 |---|---|---|
 | 200 | OK | GET, PUT, DELETE berhasil; join siswa; upload materi/soal sync sukses |
 | 201 | Created | register, buat modul/kelas/siswa/materi, submit jawaban |
+| 202 | Accepted | POST /tutor (ACK fire-and-forget) |
 | 302 | Found | redirect verify-email |
 | 400 | Bad Request | validasi gagal, nama duplikat, file terlalu besar/bukan PDF, bukan pemilik resource |
 | 401 | Unauthorized | token hilang/salah/kedaluwarsa/wrong role, login gagal, kode kelas salah |
@@ -1760,8 +1816,51 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 | 422 | Unprocessable Entity | proses AI gagal (materi/soal) |
 | 429 | Too Many Requests | rate limit terlampaui |
 | 500 | Internal Server Error | kesalahan tak terduga di server |
+| 503 | Service Unavailable | AI Service error (tutor, evaluate) |
 
-### Error Codes (field `code`)
+### Error Codes Standar (field `code` + `source`) 🆕
+
+**Client errors (4xx) — `source: "client"`:**
+| Code | HTTP | Kapan muncul | Saran FE |
+|---|---|---|---|
+| `INVALID_REQUEST` | 400 | Body tidak valid | Tampilkan message |
+| `MISSING_FIELD` | 400 | Field wajib kosong | Highlight field |
+| `INVALID_FORMAT` | 400 | Format salah (ID, jenis) | Tampilkan message |
+| `INVALID_FILE` | 400 | File bukan PDF / > batas | Tampilkan batas |
+| `UNAUTHORIZED` | 401 | Token hilang/salah/expired | Redirect join/login |
+| `FORBIDDEN` | 403 | Bukan pemilik / modul tidak ditugaskan | Tampilkan message |
+| `NOT_FOUND` | 404 | Resource tidak ada | Tampilkan message |
+| `DUPLICATE` | 409 | Nama siswa sudah ada di kelas | Tampilkan message |
+| `ALREADY_ANSWERED` | 409 | Soal UTS/UAS sudah dijawab | Lanjut soal berikutnya |
+
+**AI Service errors (5xx) — `source: "ai_service"`:**
+| Code | HTTP | Kapan muncul | Saran FE |
+|---|---|---|---|
+| `AI_PROCESSING_FAILED` | 503 | AI gagal ekstrak/evaluasi | "Coba lagi atau ganti PDF" |
+| `AI_TIMEOUT` | 503 | AI terlalu lama | Retry 1x, lalu message |
+| `AI_UNAVAILABLE` | 503 | AI Service down / reject | "AI sibuk, coba lagi nanti" + retry backoff |
+| `AI_INVALID_RESPONSE` | 503 | Response AI tidak dikenali | Message generic |
+
+**Server errors (5xx) — `source: "server"`:**
+| Code | HTTP | Saran FE |
+|---|---|---|
+| `INTERNAL_ERROR` | 500 | Message generic + log |
+| `DATABASE_ERROR` | 500 | Message generic + log |
+
+**Pattern penanganan universal:**
+```javascript
+if (!res.ok) {
+  const err = await res.json();
+  setLoading(false);                       // WAJIB di semua path
+  if (err.source === 'ai_service') showToast('AI sedang sibuk, coba lagi nanti', 'warning');
+  else if (err.source === 'client') showToast(err.message, 'error');
+  else showToast('Terjadi kesalahan sistem, coba lagi', 'error');
+  if (res.status === 401) restartOnboarding(); // token mati → alur join ulang
+  return;
+}
+```
+
+### Error Codes Lama (masih dipakai di middleware stream & sebagian endpoint guru)
 
 | Code | Kapan muncul | Saran penanganan FE |
 |---|---|---|
@@ -1785,7 +1884,7 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 5. **Object materi tidak punya `updated_at`** — hanya `created_at`.
 6. **Materi & Soal keduanya SYNCHRONOUS** (14 Sept): request ditahan 10–60 detik sampai AI selesai; FE wajib spinner + render array `data` (bukan `message`). **HAPUS semua logic polling untuk upload soal.**
 7. **`GET /kelas` berbentuk `{ data, meta }`** karena pagination — baca `response.data`.
-8. **Role isolation aktif**: token guru ≠ endpoint siswa, dan sebaliknya (`TOKEN_WRONG_ROLE`). Halaman guru pakai `GET /modul/:id` untuk preview soal; halaman siswa pakai `GET /modul/:id/soal`.
+8. **Role isolation aktif**: token guru ≠ endpoint siswa, dan sebaliknya (`TOKEN_WRONG_ROLE`). Halaman guru pakai `GET /modul/:id` untuk preview soal; halaman siswa pakai `GET /modul/:id/soal` atau `/siswa/modul/:id/soal`.
 9. **Pilihan jawaban diacak backend** per request pada `GET /modul/:id/soal` — FE tidak perlu mengacak lagi.
 10. **`PUT /modul/:id` menimpa deskripsi selalu**: mengirim hanya `nama` akan mengosongkan deskripsi. Kirim keduanya untuk aman.
 11. **Response `PUT /modul/:id` menyertakan preload materi & soal** (payload besar) — jangan render langsung sebagai list, ambil field yang diperlukan saja.
@@ -1800,15 +1899,31 @@ Endpoint utilitas untuk menguji ekstraksi teks PDF **tanpa menyimpan ke database
 20. **CRUD Soal Manual tersedia** (14 Sept): `POST /modul/:id/soal/manual`, `GET /modul/:id/soal/list`, `PUT /soal/:id`, `DELETE /soal/:id`.
 21. **`kunci_jawaban` tidak pernah bocor** di response manapun, termasuk saat create/update soal manual. Saat edit, FE perlu minta user memasukkan ulang kunci jawaban (tidak bisa ditampilkan nilai saat ini).
 22. **Soal manual & hasil AI bercampur** di `GET /modul/:id/soal/list` — FE bisa menandai soal AI vs manual berdasarkan field `created_at` atau menambahkan flag UI jika perlu.
-23. 🆕 **Auto-register siswa** (14 Sept update 4): `POST /join` sekarang otomatis membuat siswa baru jika nama belum terdaftar. Guru tetap bisa lihat daftar siswa real-time via SSE.
-24. 🆕 **Endpoint siswa baru** (14 Sept update 4):
-    - `GET /siswa/kelas-saya` — info kelas + modul + flag ketersediaan materi/soal
-    - `GET /siswa/modul/:id/materi` — list materi untuk dibacakan TTS (validasi modul tertaut ke kelas)
-25. 🆕 **AI bisa tahu modul mana yang punya materi/soal** dari field `punya_materi` dan `jenis_soal_tersedia` di response `GET /siswa/kelas-saya`.
+23. **Auto-register siswa** (14 Sept update 4): `POST /join` sekarang otomatis membuat siswa baru jika nama belum terdaftar. Guru tetap bisa lihat daftar siswa real-time via SSE.
+24. **Endpoint siswa baru** (14 Sept update 4): `GET /siswa/kelas-saya`, `GET /siswa/modul/:id/materi`.
+25. **AI bisa tahu modul mana yang punya materi/soal** dari field `punya_materi` dan `jenis_soal_tersedia` di response `GET /siswa/kelas-saya`.
+26. 🆕 **Stream support token via query param** `?token=` (18 Sept) — solusi untuk `EventSource` native yang tidak bisa kirim header Authorization.
+27. 🆕 **`tutor-reply` targeted per siswa** — hanya siswa yang mengirim pesan yang menerima balasannya; jangan broadcast ke semua siswa di FE.
+28. 🆕 **Dua format error hidup bersamaan** (18 Sept): format standar `{code, message, source}` di endpoint bisnis, format lama `{error, code}` di middleware stream. Cek field `source` untuk membedakan.
+29. 🆕 **WAJIB reset loading di semua error path** — insiden 18 Sept: UI stuck "Sedang Memahami..." karena error path (token kosong / request gagal) tidak memanggil `setLoading(false)`.
+30. 🆕 **Token siswa hilang/expired jangan cuma di-toast** — restart alur onboarding suara (langkah 1–2 plan) atau redirect ke halaman join, karena seluruh alur siswa bergantung pada token dari `POST /join`.
+31. 🆕 **Upload soal/materi sekarang parallel** (18 Sept): tipikal 20–30 detik (sebelumnya hingga 60 detik). Timeout fetch tetap > 120 detik untuk PDF besar.
+32. 🆕 **Endpoint detail modul siswa** `GET /siswa/modul/:id` tersedia (18 Sept) — pakai ini untuk header halaman belajar, bukan `GET /modul/:id` (yang khusus guru).
+33. 🆕 **Mode tutor = 2 langkah**: `POST /tutor` (ACK 202) lalu tunggu event `tutor-reply` di stream; pasang watchdog 35 detik di FE.
 
 ---
 
 ## Changelog
+
+### 18 September 2026 (update 5)
+- 🆕 **Mode Tutor (Fase 2 plan alignment):** `POST /api/v1/tutor` — async fire-and-forget, ACK `202` < 1 detik, balasan AI dikirim via stream event `tutor-reply` (targeted per siswa)
+- 🆕 **Event `tutor-reply`** di unified stream (scope siswa yang meminta); balasan AI max 80 kata, TTS-safe, analogi auditori/taktil
+- 🆕 **Endpoint siswa:** `GET /api/v1/siswa/modul/:id` (detail modul: jumlah materi/soal + jenis soal tersedia) dan `GET /api/v1/siswa/modul/:id/soal` (alias soal siswa)
+- 🆕 **Standard error handling:** format `{code, message, source}` dengan 3 source (`client` / `ai_service` / `server`) — FE bisa membedakan "FE salah", "AI salah", "backend salah"
+- 🆕 **Stream `/api/v1/stream` menerima token via query param** `?token=` — mendukung `EventSource` native browser
+- ⚡ **Parallel chunk processing:** upload soal/materi 47s → ~23s (goroutine per chunk)
+- ✅ **AI extraction meningkat:** hingga 20–21 soal per PDF kumpulan soal (sebelumnya 2)
+- ✅ Validasi end-to-end tutor: POST /tutor 202 (1.08s) → event tutor-reply diterima stream siswa
 
 ### 14 September 2026 (update 4)
 - 🔄 **BREAKING:** `POST /join` sekarang **auto-register** siswa baru (nama belum ada = dibuat otomatis, bukan error)
