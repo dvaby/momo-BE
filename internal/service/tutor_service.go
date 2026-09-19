@@ -38,14 +38,14 @@ type TutorService struct {
 	callbackURL  string
 	siswaService *SiswaService
 
-	mu                 sync.Mutex
-	sessionLastCode    map[string]string
-	sessionFailedCode  map[string]string
-	sessionJoined      map[string]bool
-	sessionKelasNama   map[string]string
-	sessionNama        map[string]string
-	sessionKelasID     map[string]uint    // NEW: kelas ID untuk cek konten
-	sessionKonten      map[string]KontenKelas // NEW: cache konten kelas per session
+	mu                sync.Mutex
+	sessionLastCode   map[string]string
+	sessionFailedCode map[string]string
+	sessionJoined     map[string]bool
+	sessionKelasNama  map[string]string
+	sessionNama       map[string]string
+	sessionKelasID    map[string]uint
+	sessionKonten     map[string]KontenKelas
 }
 
 var (
@@ -139,11 +139,9 @@ func extractNamaDariPesan(pesan string) string {
 	return ""
 }
 
-// NEW: deteksi apakah user sedang minta materi atau soal
 func deteksiNiatUser(pesan string) (string, string) {
-	// return: ("materi"|"soal"|"", topik)
 	p := strings.ToLower(strings.TrimSpace(pesan))
-	
+
 	var niat string
 	if strings.Contains(p, "materi") || strings.Contains(p, "baca") || strings.Contains(p, "belajar teori") {
 		niat = "materi"
@@ -151,7 +149,6 @@ func deteksiNiatUser(pesan string) (string, string) {
 		niat = "soal"
 	}
 
-	// Ekstrak topik setelah kata kunci
 	topik := ""
 	prefixes := []string{
 		"aku mau belajar tentang", "saya mau belajar tentang", "aku ingin belajar tentang",
@@ -174,10 +171,28 @@ func bersihPadding(s string) string {
 	return strings.ReplaceAll(s, paddingMarker, "")
 }
 
+// cekKataOnboarding mendeteksi apakah balasan AI masih mengandung kata-kata onboarding.
+// Dipakai untuk override agresif pasca-join.
+func cekKataOnboarding(balasanLower string) bool {
+	kataOnboarding := []string{
+		"kode kelas", "kode belum", "belum benar", "belum terkonfirmasi",
+		"sebutkan kode", "sebutkan kembali", "sebutkan lagi", "sebutkan nama",
+		"enam digit", "siapa nama", "nama kamu", "boleh tahu nama",
+		"belum terdaftar", "kode tidak", "kodenya", "ulangi kode",
+	}
+	for _, kata := range kataOnboarding {
+		if strings.Contains(balasanLower, kata) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
 
+	// 1. REKAM kode 6 digit HANYA dari ucapan siswa (sumber kebenaran utama)
 	if m := sixDigits.FindString(pesanSiswa); m != "" {
 		s.mu.Lock()
 		s.sessionLastCode[sessionID] = m
@@ -195,7 +210,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	konteks := fmt.Sprintf("Kelas: %s | Session: %s", kelasNama, sessionID)
 	if alreadyJoined {
 		konteks += fmt.Sprintf(" | STATUS: ONBOARDING SELESAI. Siswa sudah terdaftar di kelas %s.", storedKelas)
-		konteks += fmt.Sprintf(" | KONTEN KELAS: %d materi, %d soal tersedia. Sesuaikan jawabanmu dengan konten ini.", storedKonten.JumlahMateri, storedKonten.JumlahSoal)
+		konteks += fmt.Sprintf(" | KONTEN KELAS: %d materi, %d soal tersedia.", storedKonten.JumlahMateri, storedKonten.JumlahSoal)
 		konteks += " JANGAN minta kode kelas atau nama lagi; langsung lanjut mode belajar."
 	} else {
 		konteks += " | INSTRUKSI KRITIS: Ikuti urutan onboarding INI PERSIS: (1) tanya kesiapan, (2) kalau siap TANYA NAMA DULU, (3) baru tanya kode kelas 6 digit, (4) konfirmasi kode, (5) tunggu konfirmasi siswa. JANGAN minta kode kelas sebelum tahu nama siswa. JANGAN tanya nama dua kali."
@@ -260,15 +275,8 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	s.mu.Unlock()
 
 	balasanLower := strings.ToLower(out.Balasan)
-	adaNegasi := strings.Contains(balasanLower, "tidak perlu") ||
-		strings.Contains(balasanLower, "sudah masuk") ||
-		strings.Contains(balasanLower, "sudah terdaftar") ||
-		strings.Contains(balasanLower, "sudah terkonfirmasi") ||
-		strings.Contains(balasanLower, "sudah benar") ||
-		strings.Contains(balasanLower, "sudah tersimpan") ||
-		strings.Contains(balasanLower, "tunggu sebentar") ||
-		strings.Contains(balasanLower, "sedang mengecek")
 
+	// Deteksi AI minta kode/nama
 	mintaKodePositif := strings.Contains(balasanLower, "sebutkan kode") ||
 		strings.Contains(balasanLower, "sebutkan kembali kode") ||
 		strings.Contains(balasanLower, "bisa sebutkan lagi") ||
@@ -278,13 +286,21 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		strings.Contains(balasanLower, "kurang mendengar kode") ||
 		strings.Contains(balasanLower, "tidak terdengar jelas") ||
 		(strings.Contains(balasanLower, "kode kelas") && strings.Contains(balasanLower, "sebutkan lagi"))
-	aiMintaKode := mintaKodePositif && !adaNegasi
+
+	// Jangan anggap sebagai "minta kode" kalau AI sedang memberi feedback jumlah digit
+	adaFeedbackDigit := strings.Contains(balasanLower, "lima digit") ||
+		strings.Contains(balasanLower, "tujuh digit") ||
+		strings.Contains(balasanLower, "kurang dari enam") ||
+		strings.Contains(balasanLower, "lebih dari enam") ||
+		strings.Contains(balasanLower, "harus terdiri dari enam")
+
+	aiMintaKode := mintaKodePositif && !adaFeedbackDigit
 
 	mintaNamaPositif := strings.Contains(balasanLower, "siapa nama") ||
 		strings.Contains(balasanLower, "nama kamu") ||
 		strings.Contains(balasanLower, "sebutkan nama") ||
 		strings.Contains(balasanLower, "boleh tahu nama")
-	aiMintaNama := mintaNamaPositif && !adaNegasi
+	aiMintaNama := mintaNamaPositif
 
 	pesanLower := strings.ToLower(pesanSiswa)
 	isKonfirmasi := konfirmasiRe.MatchString(pesanLower) && !negasiRe.MatchString(pesanLower)
@@ -304,41 +320,63 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			out.Balasan = "Sebelum kita lanjut ke kode kelas, boleh tahu dulu nama kamu? Sebutkan nama kamu ya."
 			out.Fase = "onboarding"
 			out.ExtractKode = ""
-		case (isKonfirmasi && lastCode != "") || (out.ExtractNama != "" && out.ExtractKode != ""):
+
+		// TRIGGER AUTO-JOIN: HANYA jika user konfirmasi DAN ada kode 6 digit dari ucapan user.
+		// TIDAK ADA lagi trigger berdasarkan ExtractKode AI (mencegah halusinasi "111111").
+		case isKonfirmasi && lastCode != "":
 			s.handleAutoJoin(sessionID, out)
 		}
+
+		// SAFEGUARD ANTI-HALUSINASI FASE:
+		// Jika AI nekat set fase="belajar" padahal backend belum join, paksa kembali ke onboarding.
+		if out.Fase == "belajar" && out.Join == nil {
+			out.Fase = "onboarding"
+			if storedNama != "" {
+				out.Balasan = fmt.Sprintf("Wah, sepertinya aku salah dengar. %s, bisa tolong sebutkan ulang kode kelas kamu (enam digit angka)?", storedNama)
+			} else {
+				out.Balasan = "Wah, sepertinya aku salah dengar. Bisa tolong sebutkan ulang kode kelas kamu (enam digit angka)?"
+			}
+			log.Printf("[tutor] safeguard: AI set fase=belajar tapi user belum join. Dipaksa ke onboarding.")
+		}
 	} else {
-		// SUDAH JOIN: PAKSA FASE BELAJAR
+		// SUDAH JOIN: PAKSA FASE BELAJAR + OVERRIDE AGRESIF
 		out.Fase = "belajar"
 
-		// NEW: cek niat user (materi / soal)
 		niat, topik := deteksiNiatUser(pesanSiswa)
-		_ = storedKelasID // kita pakai storedKelasID kalau butuh re-check
+		_ = storedKelasID
 
-		// Override kalau user minta sesuatu yang tidak tersedia
-		if niat != "" {
+		nama := storedNama
+		if nama == "" {
+			nama = "Siswa"
+		}
+
+		// OVERRIDE AGRESIF: Kalau balasan AI masih mengandung kata onboarding, GANTI total.
+		// Ini mencegah AI terus bilang "kodenya belum benar" setelah join sukses.
+		if cekKataOnboarding(balasanLower) {
 			if niat == "materi" && storedKonten.JumlahMateri == 0 && storedKonten.JumlahSoal > 0 {
-				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada materi bacaan, Tegar. Yang tersedia baru %d soal latihan. Mau kita mulai ngerjain soal dulu?",
-					storedKelas, storedKonten.JumlahSoal)
+				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada materi bacaan, %s. Yang tersedia baru %d soal latihan. Mau kita mulai ngerjain soal dulu?",
+					storedKelas, nama, storedKonten.JumlahSoal)
 			} else if niat == "soal" && storedKonten.JumlahSoal == 0 && storedKonten.JumlahMateri > 0 {
-				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada soal latihan, Tegar. Yang tersedia baru %d materi bacaan. Mau kita mulai baca materi dulu?",
-					storedKelas, storedKonten.JumlahMateri)
-			} else if storedKonten.JumlahMateri == 0 && storedKonten.JumlahSoal == 0 {
-				out.Balasan = fmt.Sprintf("Kelas %s ini masih kosong, Tegar. Coba hubungi guru kamu dulu untuk menambahkan materi atau soal ya.", storedKelas)
-			}
-			// kalau konten ada, biarkan balasan AI natural
-		} else if aiMintaKode || aiMintaNama {
-			// AI masih nyasar minta kode/nama
-			nama := storedNama
-			if nama == "" {
-				nama = "Siswa"
-			}
-			if len(topik) > 2 {
-				out.Balasan = fmt.Sprintf("Dicatat, %s! Kita akan belajar %s bersama-sama. Apa yang paling ingin kamu tahu dulu tentang itu?", nama, topik)
+				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada soal latihan, %s. Yang tersedia baru %d materi bacaan. Mau kita mulai baca materi dulu?",
+					storedKelas, nama, storedKonten.JumlahMateri)
+			} else if len(topik) > 2 {
+				out.Balasan = fmt.Sprintf("Oke %s! Ayo kita bahas %s. Apa yang ingin kamu ketahui dulu tentang itu?", nama, topik)
 			} else {
-				out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, tidak perlu kode atau nama lagi. Hari ini kamu mau belajar apa?", storedKelas)
+				out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, %s. Tidak perlu kode atau nama lagi. Hari ini kamu mau belajar apa? Di kelas ini ada %d soal latihan yang bisa kamu kerjakan.",
+					storedKelas, nama, storedKonten.JumlahSoal)
 			}
-			log.Printf("[tutor] override: AI nyasar pasca-join, dijembatani (session %s)", sessionID)
+			log.Printf("[tutor] override agresif: AI menyebut kata onboarding pasca-join (session %s)", sessionID)
+		} else if niat != "" {
+			// AI sudah benar, tapi cek ketersediaan konten
+			if niat == "materi" && storedKonten.JumlahMateri == 0 && storedKonten.JumlahSoal > 0 {
+				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada materi bacaan, %s. Yang tersedia baru %d soal latihan. Mau kita mulai ngerjain soal dulu?",
+					storedKelas, nama, storedKonten.JumlahSoal)
+			} else if niat == "soal" && storedKonten.JumlahSoal == 0 && storedKonten.JumlahMateri > 0 {
+				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada soal latihan, %s. Yang tersedia baru %d materi bacaan. Mau kita mulai baca materi dulu?",
+					storedKelas, nama, storedKonten.JumlahMateri)
+			} else if storedKonten.JumlahMateri == 0 && storedKonten.JumlahSoal == 0 {
+				out.Balasan = fmt.Sprintf("Kelas %s ini masih kosong, %s. Coba hubungi guru kamu dulu untuk menambahkan materi atau soal ya.", storedKelas, nama)
+			}
 		}
 	}
 
@@ -359,11 +397,8 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		return
 	}
 
+	// HANYA gunakan kode dari ucapan user (last), JANGAN gunakan extract AI
 	candidate := last
-	if candidate == "" {
-		candidate = out.ExtractKode
-	}
-
 	if !kodeKelasValid(candidate) {
 		out.JoinError = "Kode kelas harus enam digit angka."
 		out.Fase = "onboarding"
@@ -402,10 +437,9 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 	}
 
 	namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
-	
-	// NEW: hitung konten kelas & simpan ke memori session
+
 	konten := s.siswaService.HitungKontenKelas(siswa.KelasID)
-	
+
 	s.mu.Lock()
 	s.sessionJoined[sessionID] = true
 	s.sessionKelasNama[sessionID] = namaKelas
@@ -423,8 +457,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		Token:     token,
 	}
 	out.Fase = "belajar"
-	
-	// NEW: balasan join disesuaikan dengan konten kelas yang tersedia
+
 	switch {
 	case konten.JumlahMateri > 0 && konten.JumlahSoal > 0:
 		out.Balasan = fmt.Sprintf("Sempurna! Kamu sekarang resmi masuk kelas %s. Di kelas ini ada %d materi dan %d soal latihan yang bisa kamu pelajari. Hari ini kamu mau belajar apa, %s?",
@@ -439,7 +472,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		out.Balasan = fmt.Sprintf("Sempurna! Kamu sekarang resmi masuk kelas %s. Tapi sepertinya kelas ini masih kosong — belum ada materi atau soal. Coba hubungi guru kamu dulu ya, %s.",
 			namaKelas, siswa.Nama)
 	}
-	
+
 	log.Printf("[tutor] auto-join SUKSES: siswa %d (%s) kelas %d (%s) — konten: %d materi, %d soal",
 		siswa.ID, siswa.Nama, siswa.KelasID, namaKelas, konten.JumlahMateri, konten.JumlahSoal)
 }
