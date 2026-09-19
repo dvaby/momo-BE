@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
 	"momo-be/internal/job"
@@ -29,14 +28,13 @@ func NewTutorService(
 }
 
 // ProcessTutor = SATU API percakapan: kirim pesan ke AI, tunggu reasoning,
-// return balasan teks. Pola sync-via-callback (sama seperti submit-jawaban).
-func (s *TutorService) ProcessTutor(siswaID uint, kelasNama string, pesanSiswa string) (string, string, error) {
+// return balasan teks. sessionID = kunci memory percakapan (siswa-N atau anon).
+func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (string, string, error) {
 	jobID := job.GenerateID("tutor")
-	sessionID := fmt.Sprintf("siswa-%d", siswaID) // key memory percakapan di AI Service
 
-	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", strconv.FormatUint(uint64(siswaID), 10))
+	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
 
-	konteks := fmt.Sprintf("Kelas: %s | Siswa ID: %d", kelasNama, siswaID)
+	konteks := fmt.Sprintf("Kelas: %s | Session: %s", kelasNama, sessionID)
 
 	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, pesanSiswa, konteks, sessionID)
 	if err != nil {
