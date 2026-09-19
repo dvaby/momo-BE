@@ -53,7 +53,7 @@ var (
 	konfirmasiRe = regexp.MustCompile(`\b(ya|iya|benar|betul)\b`)
 	negasiRe     = regexp.MustCompile(`\b(belum|bukan|salah|tidak)\b`)
 
-	// Pola frasa eksplisit untuk menangkap nama
+	// HANYA pola frasa eksplisit untuk menangkap nama (TIDAK ADA fallback tebak-tebakan)
 	namaPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bnama\s+aku\s+([a-zA-Z][a-zA-Z'\-]{1,20}(?:\s[a-zA-Z][a-zA-Z'\-]{1,20})?)`),
 		regexp.MustCompile(`(?i)\bnamaku\s+([a-zA-Z][a-zA-Z'\-]{1,20}(?:\s[a-zA-Z][a-zA-Z'\-]{1,20})?)`),
@@ -98,7 +98,7 @@ func kodeKelasValid(kode string) bool {
 	return true
 }
 
-// sanitizeNama membersihkan nama hasil extract AI / ucapan user.
+// sanitizeNama membersihkan nama hasil extract AI.
 func sanitizeNama(nama string) string {
 	n := strings.TrimSpace(nama)
 	if idx := strings.Index(n, "menjawab:"); idx >= 0 {
@@ -118,6 +118,7 @@ func sanitizeNama(nama string) string {
 	badWords := []string{
 		"siap", "belajar", "momo", "halo", "oke", "baik", "boleh", "mulai",
 		"lanjut", "ayo", "silakan", "terima", "belum", "tidak", "maaf",
+		"sedang", "mendengarkan", "emang", "tadi", "salah", "sudah", "benar",
 	}
 	for _, w := range badWords {
 		if strings.Contains(lower, w) {
@@ -127,7 +128,8 @@ func sanitizeNama(nama string) string {
 	return n
 }
 
-// extractNamaDariPesan menangkap nama dari frasa eksplisit ("nama aku Budi").
+// extractNamaDariPesan HANYA menangkap nama dari frasa eksplisit ("nama aku Budi").
+// KITA HAPUS FALLBACK TEBAK-TEBAKAN agar kalimat acak tidak masuk ke database sebagai nama.
 func extractNamaDariPesan(pesan string) string {
 	for _, re := range namaPatterns {
 		if m := re.FindStringSubmatch(pesan); len(m) > 1 {
@@ -139,35 +141,7 @@ func extractNamaDariPesan(pesan string) string {
 	return ""
 }
 
-// extractNamaFallback menangkap nama polos ("Budi", "aku Budi") saat fase nama
-// masih kosong: pesan pendek, murni huruf, dan lolos sanitize.
-func extractNamaFallback(pesan string) string {
-	p := strings.TrimSpace(pesan)
-	lower := strings.ToLower(p)
-	prefixes := []string{
-		"nama aku ", "namaku ", "nama saya ", "panggil aku ",
-		"aku ", "saya ", "gua ", "gue ", "ini ",
-	}
-	for _, pre := range prefixes {
-		if strings.HasPrefix(lower, pre) {
-			p = strings.TrimSpace(p[len(pre):])
-			lower = strings.ToLower(p)
-			break
-		}
-	}
-	p = strings.TrimSpace(strings.ReplaceAll(p, "adalah", " "))
-	if p == "" || len(p) > 30 || strings.Count(p, " ") > 2 {
-		return ""
-	}
-	for _, r := range p {
-		if r != ' ' && r != '\'' && r != '-' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
-			return ""
-		}
-	}
-	return sanitizeNama(p)
-}
-
-// extractTopik mengambil inti topik dari pesan user ("aku mau belajar getaran" -> "getaran").
+// extractTopik mengambil inti topik dari pesan user.
 func extractTopik(pesan string) string {
 	p := strings.ToLower(strings.TrimSpace(pesan))
 	prefixes := []string{
@@ -257,11 +231,8 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		ExtractKode: res.ExtractKode,
 	}
 
-	// 3. REKAM NAMA: frasa eksplisit dulu, lalu fallback nama polos
+	// 3. REKAM NAMA: HANYA dari frasa eksplisit atau extract AI yang valid
 	namaTurn := extractNamaDariPesan(pesanSiswa)
-	if namaTurn == "" && !alreadyJoined && !sixDigits.MatchString(pesanSiswa) {
-		namaTurn = extractNamaFallback(pesanSiswa)
-	}
 	if namaTurn != "" {
 		s.mu.Lock()
 		s.sessionNama[sessionID] = namaTurn
@@ -279,14 +250,16 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	storedNama := s.sessionNama[sessionID]
 	s.mu.Unlock()
 
-	// 4. DETEKSI pola balasan AI (dengan penjaga negasi anti false-positive)
+	// 4. DETEKSI pola balasan AI
 	balasanLower := strings.ToLower(out.Balasan)
 	adaNegasi := strings.Contains(balasanLower, "tidak perlu") ||
 		strings.Contains(balasanLower, "sudah masuk") ||
 		strings.Contains(balasanLower, "sudah terdaftar") ||
 		strings.Contains(balasanLower, "sudah terkonfirmasi") ||
 		strings.Contains(balasanLower, "sudah benar") ||
-		strings.Contains(balasanLower, "sudah tersimpan")
+		strings.Contains(balasanLower, "sudah tersimpan") ||
+		strings.Contains(balasanLower, "tunggu sebentar") ||
+		strings.Contains(balasanLower, "sedang mengecek")
 
 	mintaKodePositif := strings.Contains(balasanLower, "sebutkan kode") ||
 		strings.Contains(balasanLower, "sebutkan kembali kode") ||
@@ -310,21 +283,19 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 
 	if !alreadyJoined {
 		switch {
-		// 4a. FIX BUG 1: user baru sebut nama di giliran ini tapi AI malah
-		//     komplain kode -> ganti jadi ucapan terima kasih + tanya kode bersih
+		// 4a. User sebut nama eksplisit tapi AI malah komplain kode
 		case namaTurn != "" && aiMintaKode:
 			out.Balasan = fmt.Sprintf("Terima kasih, %s. Sekarang sebutkan kode kelas kamu, enam digit angka.", namaTurn)
 			out.Fase = "onboarding"
 			log.Printf("[tutor] override: ACK nama baru (%s) + tanya kode bersih (session %s)", namaTurn, sessionID)
 
-		// 4b. AI tanya nama padahal nama sudah diketahui -> potong, lanjut minta kode
+		// 4b. AI tanya nama padahal nama sudah diketahui
 		case aiMintaNama && storedNama != "":
 			out.Balasan = fmt.Sprintf("Terima kasih, %s. Sekarang sebutkan kode kelas kamu, enam digit angka.", storedNama)
 			out.Fase = "onboarding"
 			log.Printf("[tutor] override: AI tanya nama ulang padahal sudah tahu (%s) (session %s)", storedNama, sessionID)
 
-		// 4c. AI minta kode dengan frasa "ulangi/tidak jelas" padahal user belum
-		//     pernah sebut kode -> ganti jadi pertanyaan kode yang bersih
+		// 4c. AI minta kode dengan frasa "ulangi/tidak jelas" padahal user belum pernah sebut kode
 		case aiMintaKode && storedNama != "" && lastCode == "":
 			out.Balasan = fmt.Sprintf("%s, sekarang sebutkan kode kelas kamu, enam digit angka.", storedNama)
 			out.Fase = "onboarding"
@@ -337,25 +308,26 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			out.ExtractKode = ""
 			log.Printf("[tutor] override: AI minta kode padahal nama belum ada (session %s)", sessionID)
 
-		// 4e. Trigger auto-join: user konfirmasi + ada kode terekam, ATAU extract AI lengkap
+		// 4e. Trigger auto-join
 		case (isKonfirmasi && lastCode != "") || (out.ExtractNama != "" && out.ExtractKode != ""):
 			s.handleAutoJoin(sessionID, out)
 		}
 	} else {
-		// 4f. FIX BUG 2: sudah join tapi AI masih minta nama/kode -> jangan ulangi
-		//     kalimat yang sama; kalau user menyebut topik, jembatani ke topik itu
+		// 4f. SUDAH JOIN: PAKSA FASE JADI "BELAJAR" APAPUN YANG AI KATAKAN
+		out.Fase = "belajar" 
+		
+		// Override balasan jika AI masih nyasar minta kode/nama
 		if aiMintaKode || aiMintaNama {
 			nama := storedNama
 			if nama == "" {
-				nama = "teman"
+				nama = "Siswa"
 			}
 			if topik := extractTopik(pesanSiswa); len(topik) > 2 {
 				out.Balasan = fmt.Sprintf("Dicatat, %s! Kita akan belajar %s bersama-sama. Apa yang paling ingin kamu tahu dulu tentang itu?", nama, topik)
 			} else {
 				out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, tidak perlu kode atau nama lagi. Hari ini kamu mau belajar apa?", storedKelas)
 			}
-			out.Fase = "belajar"
-			log.Printf("[tutor] override: AI nyasar pasca-join, dijembatani ke topik (session %s)", sessionID)
+			log.Printf("[tutor] override: AI nyasar pasca-join, dijembatani (session %s)", sessionID)
 		}
 	}
 
@@ -403,7 +375,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		namaJoin = storedNama
 	}
 	if namaJoin == "" {
-		namaJoin = "Siswa"
+		namaJoin = "Siswa" // Fallback aman, JANGAN tebak dari kalimat user
 	}
 
 	siswa, token, errJoin := s.siswaService.JoinSiswa(candidate, namaJoin)
