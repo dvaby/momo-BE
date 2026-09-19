@@ -1287,6 +1287,14 @@ if (!res.ok) {
 
 ## Changelog
 
+### 19 September 2026 (update 13)
+- 🚫 **Token siswa DIHAPUS dari alur FE**: identitas siswa = header `X-Session-ID`
+  (session_id percakapan yang diikat ke record siswa saat auto-join)
+- ✅ Endpoint siswa (`/siswa/*`, `/modul/:id/soal`, `/submit-jawaban`) menerima
+  `X-Session-ID`; token JWT siswa tetap diterima hanya sebagai legacy
+- ✅ Response `/chat` field `join` tidak berisi token: `{siswa_id, kelas_id, nama}`
+- 📦 FE hanya menyimpan satu string: `momo_session_id`
+
 ### 19 September 2026 (update 11)
 - 🆕 **Onboarding via percakapan**: response `/chat` menambah field `fase`
   (`"onboarding"` | `"belajar"`) dan `extract` `{nama, kode_kelas}`
