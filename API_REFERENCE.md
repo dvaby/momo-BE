@@ -1915,6 +1915,11 @@ if (!res.ok) {
 
 ## Changelog
 
+### 19 September 2026 (update 6)
+- 🆕 **Stream tanpa token (public listening mode):** `GET /api/v1/stream` tanpa auth → role `public`, menerima event scope siswa + all (connected, heartbeat, materi-ready, soal-ready, tutor-reply)
+- 🔒 Event scope guru (`jawaban-submitted`) tetap guru-only — tidak bocor ke listener publik
+- ⚠️ Catatan keamanan: percakapan tutor-reply terlihat oleh listener anonim; wajib-token akan diaktifkan kembali setelah demo
+
 ### 18 September 2026 (update 5)
 - 🆕 **Mode Tutor (Fase 2 plan alignment):** `POST /api/v1/tutor` — async fire-and-forget, ACK `202` < 1 detik, balasan AI dikirim via stream event `tutor-reply` (targeted per siswa)
 - 🆕 **Event `tutor-reply`** di unified stream (scope siswa yang meminta); balasan AI max 80 kata, TTS-safe, analogi auditori/taktil
