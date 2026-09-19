@@ -24,10 +24,10 @@ type tutorRequest struct {
 	Pesan     string `json:"pesan" binding:"required"`
 	KelasNama string `json:"kelas_nama"`
 	SessionID string `json:"session_id"`
+	KodeKelas string `json:"kode_kelas"` // hint: kode 6 digit terakhir yang disebut siswa (direkam FE)
 }
 
 // SubmitTutor — POST /api/v1/chat (AUTH OPSIONAL)
-// Response: balasan + fase + extract + join (token auto-join) / join_error.
 func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 	var req tutorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -47,7 +47,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	res, jobID, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
+	res, jobID, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan, req.KodeKelas)
 	if err != nil {
 		errMsg := err.Error()
 		switch {
@@ -71,7 +71,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 			"nama":       res.ExtractNama,
 			"kode_kelas": res.ExtractKode,
 		},
-		"join":       res.Join,      // null kecuali auto-join sukses
-		"join_error": res.JoinError, // "" kecuali auto-join gagal
+		"join":       res.Join,
+		"join_error": res.JoinError,
 	})
 }
