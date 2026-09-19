@@ -24,7 +24,8 @@ type tutorRequest struct {
 }
 
 // SubmitTutor — POST /api/v1/tutor (KHUSUS SISWA)
-// Fire-and-forget: return ACK <1 detik, balasan tutor dikirim via stream event 'tutor-reply'.
+// SYNCHRONOUS sejak 19 Sept: response berisi LANGSUNG teks balasan tutor.
+// (Event stream tutor-reply tetap dipancarkan untuk demo/listener publik.)
 func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 	siswaID, ok := getUintFromContext(c, "siswa_id")
 	if !ok {
@@ -43,22 +44,23 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	jobID, err := h.service.SubmitTutorRequest(siswaID, kelasNama, req.Pesan)
+	balasan, jobID, err := h.service.ProcessTutor(siswaID, kelasNama, req.Pesan)
 	if err != nil {
 		errMsg := err.Error()
-		if strings.Contains(errMsg, "AI Service") {
-			c.JSON(http.StatusServiceUnavailable, appErrors.NewAIError(
-				appErrors.CodeAIUnavailable,
-				"AI tutor sedang tidak tersedia. Silakan coba lagi dalam beberapa saat."))
-			return
+		switch {
+		case strings.Contains(errMsg, "timeout"):
+			c.JSON(http.StatusServiceUnavailable, appErrors.NewAIError(appErrors.CodeAITimeout, "Momo terlalu lama merespons. Silakan coba lagi."))
+		case strings.Contains(errMsg, "AI Service"), strings.Contains(errMsg, "AI tutor"):
+			c.JSON(http.StatusServiceUnavailable, appErrors.NewAIError(appErrors.CodeAIUnavailable, "AI tutor sedang tidak tersedia. Silakan coba lagi dalam beberapa saat."))
+		default:
+			c.JSON(http.StatusInternalServerError, appErrors.NewServerError(appErrors.CodeInternalError, errMsg))
 		}
-		c.JSON(http.StatusInternalServerError, appErrors.NewServerError(
-			appErrors.CodeInternalError, errMsg))
 		return
 	}
 
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "Permintaan tutor diterima, balasan akan dikirim via stream",
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Balasan tutor diterima",
 		"job_id":  jobID,
+		"balasan": balasan,
 	})
 }

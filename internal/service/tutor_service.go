@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"momo-be/internal/job"
 	"momo-be/pkg/aiclient"
@@ -27,25 +28,38 @@ func NewTutorService(
 	}
 }
 
-// SubmitTutorRequest kirim pesan ke AI Service (tipe=tutor) dengan ACK pattern.
-// Tidak tunggu hasil — hasil dikirim via callback, lalu broadcast via event 'tutor-reply'.
-// SessionID di registry dipakai untuk menyimpan siswa_id sebagai string.
-func (s *TutorService) SubmitTutorRequest(siswaID uint, kelasNama string, pesanSiswa string) (string, error) {
+// ProcessTutor mengirim pesan siswa ke AI Service dan MENUNGGU balasan
+// (sync-via-callback, pola sama seperti submit-jawaban).
+// Return: balasan teks, jobID, error.
+func (s *TutorService) ProcessTutor(siswaID uint, kelasNama string, pesanSiswa string) (string, string, error) {
 	jobID := job.GenerateID("tutor")
 
-	// Register job, simpan siswa_id di SessionID (sebagai string) untuk routing tutor-reply
+	// Register job; siswa_id disimpan di SessionID untuk routing event stream
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", strconv.FormatUint(uint64(siswaID), 10))
 
 	konteks := fmt.Sprintf("Kelas: %s | Siswa ID: %d", kelasNama, siswaID)
 
-	// Kirim ke AI Service (fire and forget, AI akan callback)
 	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, pesanSiswa, konteks)
 	if err != nil {
-		// Cleanup job kalau gagal dikirim
 		log.Printf("[tutor] gagal kirim job %s: %v", jobID, err)
-		return "", fmt.Errorf("gagal menghubungi AI Service: %w", err)
+		return "", jobID, fmt.Errorf("gagal menghubungi AI Service: %w", err)
 	}
 
-	log.Printf("[tutor] job %s dikirim ke AI untuk siswa %d, menunggu callback...", jobID, siswaID)
-	return jobID, nil
+	log.Printf("[tutor] job %s dikirim, menunggu callback (max 90 detik)...", jobID)
+
+	finished := s.jobRegistry.WaitSync(jobID, 90*time.Second)
+	if finished == nil {
+		return "", jobID, fmt.Errorf("timeout menunggu balasan tutor (90 detik)")
+	}
+	if finished.Status == "failed" {
+		return "", jobID, fmt.Errorf("AI tutor gagal memproses: %s", finished.Error)
+	}
+
+	balasan, err := job.ParseTutorResult(finished.Hasil)
+	if err != nil {
+		return "", jobID, fmt.Errorf("gagal parse balasan tutor: %w", err)
+	}
+
+	log.Printf("[tutor] job %s selesai: balasan %d karakter", jobID, len(balasan))
+	return balasan, jobID, nil
 }
