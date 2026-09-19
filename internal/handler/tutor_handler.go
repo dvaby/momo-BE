@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -24,10 +23,10 @@ type tutorRequest struct {
 	Pesan     string `json:"pesan" binding:"required"`
 	KelasNama string `json:"kelas_nama"`
 	SessionID string `json:"session_id"`
-	KodeKelas string `json:"kode_kelas"` // hint: kode 6 digit terakhir yang disebut siswa (direkam FE)
+	// KodeKelas tidak perlu dikirim FE lagi, backend otomatis extract dari teks pesan
 }
 
-// SubmitTutor — POST /api/v1/chat (AUTH OPSIONAL)
+// SubmitTutor — POST /api/v1/chat
 func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 	var req tutorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -35,10 +34,9 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		return
 	}
 
+	// Pegangan obrolan: pakai yang dikirim FE, atau buat baru untuk pengunjung pertama
 	sessionID := req.SessionID
-	if siswaID, ok := getUintFromContext(c, "siswa_id"); ok {
-		sessionID = fmt.Sprintf("siswa-%d", siswaID)
-	} else if sessionID == "" {
+	if sessionID == "" {
 		sessionID = job.GenerateID("anon")
 	}
 
@@ -47,7 +45,9 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	res, jobID, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan, req.KodeKelas)
+	// Panggil service dengan 3 argument (sessionID, kelasNama, pesan)
+	// Return value cuma 2 (res, err) karena job_id sudah di-handle internal
+	res, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
 	if err != nil {
 		errMsg := err.Error()
 		switch {
@@ -61,9 +61,9 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		return
 	}
 
+	// Response bersih ke FE: tanpa job_id
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Balasan tutor diterima",
-		"job_id":     jobID,
 		"session_id": sessionID,
 		"balasan":    res.Balasan,
 		"fase":       res.Fase,
@@ -71,7 +71,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 			"nama":       res.ExtractNama,
 			"kode_kelas": res.ExtractKode,
 		},
-		"join":       res.Join,
-		"join_error": res.JoinError,
+		"join":       res.Join,      // berisi token HANYA jika kode kelas valid
+		"join_error": res.JoinError, // terisi jika kode tidak valid
 	})
 }
