@@ -162,3 +162,12 @@ func (s *SiswaService) GetMateriForSiswa(siswaID, kelasID, modulID uint) ([]mode
 func (s *SiswaService) LinkSession(siswaID uint, sessionID string) error {
 	return s.repo.SetSessionID(siswaID, sessionID)
 }
+
+// NamaKelasByID mengambil nama kelas untuk konfirmasi onboarding.
+func (s *SiswaService) NamaKelasByID(kelasID uint) (string, error) {
+	kelas, err := s.kelasRepo.FindByID(kelasID)
+	if err != nil || kelas == nil {
+		return "", fmt.Errorf("kelas tidak ditemukan")
+	}
+	return kelas.NamaKelas, nil
+}

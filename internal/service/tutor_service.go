@@ -9,11 +9,12 @@ import (
 	"momo-be/pkg/aiclient"
 )
 
-// JoinInfo adalah info auto-join onboarding (TANPA token — FE tidak butuh token).
+// JoinInfo adalah info auto-join onboarding (TANPA token).
 type JoinInfo struct {
-	SiswaID uint   `json:"siswa_id"`
-	KelasID uint   `json:"kelas_id"`
-	Nama    string `json:"nama"`
+	SiswaID   uint   `json:"siswa_id"`
+	KelasID   uint   `json:"kelas_id"`
+	Nama      string `json:"nama"`
+	KelasNama string `json:"kelas_nama"`
 }
 
 // ChatResult adalah response lengkap percakapan tutor.
@@ -59,6 +60,9 @@ func kodeKelasValid(kode string) bool {
 	return true
 }
 
+// ProcessTutor = SATU API percakapan + AUTO-JOIN onboarding.
+// BACKEND PEMEGANG KEBENARAN: balasan final ditentukan hasil join,
+// bukan klaim AI. AI boleh salah sangka, backend tidak.
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, string, error) {
 	jobID := job.GenerateID("tutor")
 
@@ -66,8 +70,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 
 	konteks := fmt.Sprintf("Kelas: %s | Session: %s", kelasNama, sessionID)
 
-	// PATCH: padding pesan agar tidak ditolak AI Service (min 10 karakter)
-	// Kalau pesan pendek seperti "Halo" / "Ya" / "Benar", tambahkan prefix konteks
+	// Padding pesan pendek agar tidak ditolak AI Service (min 10 karakter)
 	teksKirim := pesanSiswa
 	if len(pesanSiswa) < 10 {
 		teksKirim = fmt.Sprintf("Siswa menjawab: %s", pesanSiswa)
@@ -101,24 +104,44 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		ExtractKode: res.ExtractKode,
 	}
 
+	// ============ AUTO-JOIN: BACKEND YANG MEMUTUSKAN ============
 	if out.ExtractNama != "" && out.ExtractKode != "" {
 		if !kodeKelasValid(out.ExtractKode) {
-			out.JoinError = "Kode kelas harus enam digit angka. Sebutkan ulang kode kelas kamu ya."
+			// Kode bukan 6 digit: override balasan, tetap di onboarding
+			out.JoinError = "Kode kelas harus enam digit angka."
+			out.Fase = "onboarding"
+			out.Balasan = "Kode kelas terdiri dari enam digit angka. Coba sebutkan lagi kode kelas kamu ya."
+			out.ExtractKode = ""
+			log.Printf("[tutor] auto-join ditolak: format kode tidak valid")
 		} else {
 			siswa, _, errJoin := s.siswaService.JoinSiswa(out.ExtractKode, out.ExtractNama)
 			if errJoin != nil {
+				// KODE TIDAK DITEMUKAN: override klaim sukses AI dengan pesan error.
+				// Ini fix bug "kode acak bisa masuk": yang di-speak sekarang error, bukan "terhubung".
 				out.JoinError = errJoin.Error()
-				log.Printf("[tutor] auto-join gagal: %v", errJoin)
+				out.Fase = "onboarding"
+				out.Balasan = fmt.Sprintf("Maaf, kode kelas %s tidak ditemukan. Coba sebutkan lagi kode kelas kamu ya.", out.ExtractKode)
+				out.ExtractKode = ""
+				log.Printf("[tutor] auto-join GAGAL (kode tidak ditemukan): %v", errJoin)
 			} else {
+				// SUKSES: ikat session + konfirmasi resmi dengan nama kelas
 				if errLink := s.siswaService.LinkSession(siswa.ID, sessionID); errLink != nil {
 					log.Printf("[tutor] warning: gagal ikat session: %v", errLink)
 				}
-				out.Join = &JoinInfo{SiswaID: siswa.ID, KelasID: siswa.KelasID, Nama: siswa.Nama}
-				log.Printf("[tutor] auto-join sukses: siswa %d (%s) kelas %d, session terikat", siswa.ID, siswa.Nama, siswa.KelasID)
+				namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
+				out.Join = &JoinInfo{
+					SiswaID:   siswa.ID,
+					KelasID:   siswa.KelasID,
+					Nama:      siswa.Nama,
+					KelasNama: namaKelas,
+				}
+				out.Fase = "belajar"
+				out.Balasan = fmt.Sprintf("%s Kamu sekarang resmi masuk kelas %s. Selamat belajar, %s!", out.Balasan, namaKelas, siswa.Nama)
+				log.Printf("[tutor] auto-join SUKSES: siswa %d (%s) kelas %d (%s), session terikat", siswa.ID, siswa.Nama, siswa.KelasID, namaKelas)
 			}
 		}
 	}
 
-	log.Printf("[tutor] job %s selesai: fase=%s balasan=%d karakter join=%v", jobID, out.Fase, len(out.Balasan), out.Join != nil)
+	log.Printf("[tutor] job %s selesai: fase=%s balasan=%d karakter join=%v join_error=%q", jobID, out.Fase, len(out.Balasan), out.Join != nil, out.JoinError)
 	return out, jobID, nil
 }
