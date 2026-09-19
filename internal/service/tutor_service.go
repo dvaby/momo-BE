@@ -100,11 +100,9 @@ func bersihPadding(s string) string {
 // Backend pemegang kebenaran: balasan final ditentukan hasil join, bukan klaim AI.
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
-
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
 
-	// REKAM kode 6 digit yang benar-benar disebut siswa di giliran ini.
-	// Ini sumber kebenaran utama (mengatasi extract AI yang lengket/salah).
+	// 1. REKAM kode 6 digit yang disebut siswa di giliran ini (sumber kebenaran utama)
 	if m := sixDigits.FindString(pesanSiswa); m != "" {
 		s.mu.Lock()
 		s.sessionLastCode[sessionID] = m
@@ -112,8 +110,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	}
 
 	konteks := fmt.Sprintf("Kelas: %s | Session: %s", kelasNama, sessionID)
-
-	// Padding pesan pendek (kalau AI Service masih min_length 10)
 	teksKirim := pesanSiswa
 	if len(pesanSiswa) < 10 {
 		teksKirim = "Siswa menjawab: " + pesanSiswa
@@ -147,9 +143,29 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		ExtractKode: res.ExtractKode,
 	}
 
-	// AUTO-JOIN hanya saat AI menyatakan extract lengkap
-	if out.ExtractNama != "" && out.ExtractKode != "" {
-		s.handleAutoJoin(sessionID, pesanSiswa, out)
+	// 2. CEK APAKAH USER SEDANG KONFIRMASI ("ya", "benar", "betul")
+	pesanLower := strings.ToLower(pesanSiswa)
+	isKonfirmasi := konfirmasiRe.MatchString(pesanLower) && !negasiRe.MatchString(pesanLower)
+
+	s.mu.Lock()
+	lastCode := s.sessionLastCode[sessionID]
+	joined := s.sessionJoined[sessionID]
+	s.mu.Unlock()
+
+	// 3. TRIGGER AUTO-JOIN HANYA JIKA:
+	//    - User konfirmasi ("ya benar") DAN ada kode yang direkam sebelumnya
+	//    - ATAU AI langsung kirim extract lengkap (fallback jaga-jaga)
+	shouldTryJoin := false
+	if !joined {
+		if isKonfirmasi && lastCode != "" {
+			shouldTryJoin = true
+		} else if out.ExtractNama != "" && out.ExtractKode != "" {
+			shouldTryJoin = true
+		}
+	}
+
+	if shouldTryJoin {
+		s.handleAutoJoin(sessionID, out)
 	}
 
 	log.Printf("[tutor] job %s selesai: fase=%s balasan=%d karakter join=%v join_error=%q",
@@ -158,7 +174,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 }
 
 // handleAutoJoin memutuskan nasib join: backend yang memegang kebenaran.
-func (s *TutorService) handleAutoJoin(sessionID string, pesanSiswa string, out *ChatResult) {
+func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 	s.mu.Lock()
 	last := s.sessionLastCode[sessionID]
 	failed := s.sessionFailedCode[sessionID]
@@ -183,8 +199,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, pesanSiswa string, out *
 		return
 	}
 
-	// Kode ini sudah gagal sebelumnya dan belum ada kode baru -> jangan retry buta,
-	// minta kode lain (mengatasi extract AI yang lengket di kode lama)
+	// Kode ini sudah gagal sebelumnya -> jangan retry buta, minta kode lain
 	if candidate == failed {
 		out.JoinError = "kelas dengan kode '" + candidate + "' tidak ditemukan"
 		out.Fase = "onboarding"
@@ -193,7 +208,12 @@ func (s *TutorService) handleAutoJoin(sessionID string, pesanSiswa string, out *
 		return
 	}
 
-	siswa, token, errJoin := s.siswaService.JoinSiswa(candidate, out.ExtractNama)
+	namaJoin := out.ExtractNama
+	if namaJoin == "" {
+		namaJoin = "Siswa"
+	}
+
+	siswa, token, errJoin := s.siswaService.JoinSiswa(candidate, namaJoin)
 	if errJoin != nil {
 		s.mu.Lock()
 		s.sessionFailedCode[sessionID] = candidate
@@ -206,7 +226,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, pesanSiswa string, out *
 		return
 	}
 
-	// SUKSES: ikat session ke siswa, umumkan resmi oleh backend
+	// SUKSES: umumkan resmi oleh backend
 	s.mu.Lock()
 	s.sessionJoined[sessionID] = true
 	delete(s.sessionFailedCode, sessionID)
@@ -218,11 +238,11 @@ func (s *TutorService) handleAutoJoin(sessionID string, pesanSiswa string, out *
 		KelasID:   siswa.KelasID,
 		Nama:      siswa.Nama,
 		KelasNama: namaKelas,
-		Token:     token, // 🪪 AUTH keluar di sini, dan HANYA di sini
+		Token:     token,
 	}
 	out.Fase = "belajar"
 	out.Balasan = fmt.Sprintf("%s Kamu sekarang resmi masuk kelas %s. Selamat belajar, %s!",
 		out.Balasan, namaKelas, siswa.Nama)
-	log.Printf("[tutor] auto-join SUKSES: siswa %d (%s) kelas %d (%s), session terikat",
+	log.Printf("[tutor] auto-join SUKSES: siswa %d (%s) kelas %d (%s)",
 		siswa.ID, siswa.Nama, siswa.KelasID, namaKelas)
 }
