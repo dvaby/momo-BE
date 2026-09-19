@@ -27,6 +27,7 @@ func SetupRouter(
 	aiCallbackHandler *handler.AICallbackHandler,
 	streamHandler *handler.StreamHandler,
 	tutorHandler *handler.TutorHandler,
+	siswaAuthMiddleware gin.HandlerFunc,   
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -73,7 +74,7 @@ func SetupRouter(
 
 		// ==================== SISWA ENDPOINTS ====================
 		siswaAuth := api.Group("")
-siswaAuth.Use(middleware.AuthMiddleware())
+	siswaAuth.Use(siswaAuthMiddleware)
 {
 	siswaAuth.GET("/modul/:id/soal", soalHandler.GetSoalByModul)
 	siswaAuth.POST("/submit-jawaban", middleware.RateLimiterMiddleware(aiLimiter), jawabanSiswaHandler.SubmitJawaban)

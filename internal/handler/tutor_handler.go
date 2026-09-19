@@ -23,13 +23,11 @@ func NewTutorHandler(service *service.TutorService) *TutorHandler {
 type tutorRequest struct {
 	Pesan     string `json:"pesan" binding:"required"`
 	KelasNama string `json:"kelas_nama"`
-	SessionID string `json:"session_id"` // opsional: kunci memory percakapan
+	SessionID string `json:"session_id"`
 }
 
-// SubmitTutor — POST /api/v1/chat (AUTH OPSIONAL sejak 19 Sept)
-// - Pakai token siswa  → session otomatis "siswa-<id>" (memory nyambung ke akun)
-// - Tanpa token        → session dari body session_id (atau dibuat baru)
-// Response SYNCHRONOUS berisi teks balasan siap TTS.
+// SubmitTutor — POST /api/v1/chat (AUTH OPSIONAL)
+// Response: balasan + fase + extract + join (token auto-join) / join_error.
 func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 	var req tutorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -37,7 +35,6 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		return
 	}
 
-	// Identitas opsional: ada token siswa → pakai session siswa; tidak ada → anonim
 	sessionID := req.SessionID
 	if siswaID, ok := getUintFromContext(c, "siswa_id"); ok {
 		sessionID = fmt.Sprintf("siswa-%d", siswaID)
@@ -50,7 +47,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	balasan, jobID, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
+	res, jobID, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
 	if err != nil {
 		errMsg := err.Error()
 		switch {
@@ -67,7 +64,14 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Balasan tutor diterima",
 		"job_id":     jobID,
-		"session_id": sessionID, // FE WAJIB simpan & kirim balik tiap giliran
-		"balasan":    balasan,
+		"session_id": sessionID,
+		"balasan":    res.Balasan,
+		"fase":       res.Fase,
+		"extract": gin.H{
+			"nama":       res.ExtractNama,
+			"kode_kelas": res.ExtractKode,
+		},
+		"join":       res.Join,      // null kecuali auto-join sukses
+		"join_error": res.JoinError, // "" kecuali auto-join gagal
 	})
 }

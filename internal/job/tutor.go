@@ -5,44 +5,74 @@ import (
 	"fmt"
 )
 
-// ParseTutorResult ekstrak balasan tutor dari hasil callback.
-// Support berbagai bentuk response AI Service (balasan/jawaban/response).
-func ParseTutorResult(raw json.RawMessage) (string, error) {
+// TutorResult adalah hasil callback tutor yang terstruktur dari AI Service.
+type TutorResult struct {
+	Balasan     string // teks untuk TTS
+	Fase        string // "onboarding" | "belajar" | "" (kosong = AI belum mengisi)
+	ExtractNama string // nama siswa (jika terkumpul saat onboarding)
+	ExtractKode string // kode kelas 6 digit (jika sudah dikonfirmasi)
+}
+
+// ParseTutorFull ekstrak hasil tutor lengkap (balasan + fase + extract).
+// Mendukung bentuk datar {"balasan":...} maupun wrapped {"data":{"balasan":...}}.
+func ParseTutorFull(raw json.RawMessage) (*TutorResult, error) {
 	if len(raw) == 0 {
-		return "", fmt.Errorf("hasil callback kosong")
+		return nil, fmt.Errorf("hasil callback kosong")
 	}
 
-	// Bentuk 1: datar {balasan: "..."}
-	var datar struct {
-		Balasan string `json:"balasan"`
-	}
-	if err := json.Unmarshal(raw, &datar); err == nil && datar.Balasan != "" {
-		return datar.Balasan, nil
+	var node map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &node); err != nil {
+		return nil, fmt.Errorf("hasil callback bukan JSON object: %w", err)
 	}
 
-	// Bentuk 2: wrapped {data: {balasan: "..."}}
-	var wrapped struct {
-		Data struct {
-			Balasan string `json:"balasan"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Data.Balasan != "" {
-		return wrapped.Data.Balasan, nil
-	}
-
-	// Bentuk 3: alternatif field name (jawaban/response)
-	var alt struct {
-		Jawaban  string `json:"jawaban"`
-		Response string `json:"response"`
-	}
-	if err := json.Unmarshal(raw, &alt); err == nil {
-		if alt.Jawaban != "" {
-			return alt.Jawaban, nil
-		}
-		if alt.Response != "" {
-			return alt.Response, nil
+	// Kalau wrapped {data:{...}} dan inner punya balasan, pakai inner
+	if inner, ok := node["data"]; ok {
+		var innerMap map[string]json.RawMessage
+		if err := json.Unmarshal(inner, &innerMap); err == nil {
+			if _, has := innerMap["balasan"]; has {
+				node = innerMap
+			}
 		}
 	}
 
-	return "", fmt.Errorf("bentuk hasil tutor tidak dikenali: %s", string(raw))
+	out := &TutorResult{}
+	for _, key := range []string{"balasan", "jawaban", "response"} {
+		if v, ok := node[key]; ok {
+			var s string
+			if json.Unmarshal(v, &s) == nil && s != "" {
+				out.Balasan = s
+				break
+			}
+		}
+	}
+	if out.Balasan == "" {
+		return nil, fmt.Errorf("bentuk hasil tutor tidak dikenali: %s", string(raw))
+	}
+
+	if v, ok := node["fase"]; ok {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			out.Fase = s
+		}
+	}
+	if v, ok := node["extract"]; ok {
+		var ex struct {
+			Nama      string `json:"nama"`
+			KodeKelas string `json:"kode_kelas"`
+		}
+		if json.Unmarshal(v, &ex) == nil {
+			out.ExtractNama = ex.Nama
+			out.ExtractKode = ex.KodeKelas
+		}
+	}
+	return out, nil
+}
+
+// ParseTutorResult ekstrak hanya teks balasan (kompatibel lama, dipakai callback handler).
+func ParseTutorResult(raw json.RawMessage) (string, error) {
+	res, err := ParseTutorFull(raw)
+	if err != nil {
+		return "", err
+	}
+	return res.Balasan, nil
 }

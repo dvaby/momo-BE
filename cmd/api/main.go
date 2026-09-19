@@ -14,6 +14,7 @@ import (
 	"momo-be/internal/sse"
 	"momo-be/pkg/aiclient"
 	"momo-be/pkg/emailsender"
+	"momo-be/internal/middleware"
 )
 
 func main() {
@@ -82,7 +83,7 @@ nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
 // BARU: Tutor service untuk Mode Tutor Fase 2
-tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL)
+tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, siswaService)
 tutorHandler := handler.NewTutorHandler(tutorService)
 
 // Handler callback AI (tambah unifiedHub untuk emit tutor-reply)
@@ -102,6 +103,7 @@ aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalTok
 	aiCallbackHandler,
 	streamHandler,
 	tutorHandler,
+	middleware.NewAuthMiddleware(siswaRepo),
 )
 	r.Run(":" + cfg.ServerPort)
 }

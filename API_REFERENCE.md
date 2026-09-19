@@ -1287,6 +1287,13 @@ if (!res.ok) {
 
 ## Changelog
 
+### 19 September 2026 (update 11)
+- 🆕 **Onboarding via percakapan**: response `/chat` menambah field `fase`
+  (`"onboarding"` | `"belajar"`) dan `extract` `{nama, kode_kelas}`
+- 🧠 AI mengisi `extract` saat siswa menyebut nama & mengkonfirmasi kode kelas 6 digit;
+  FE memanggil `POST /join` otomatis begitu keduanya terisi
+- 🔧 `ParseTutorFull` di backend meneruskan field baru tanpa memecah kompatibilitas lama
+
 ### 19 September 2026 (update 6–10, FINAL pre-demo)
 - 🆕 **Stream tanpa token**: `GET /stream` tanpa auth → role `public` (menerima event scope siswa + all; event guru tetap aman)
 - 🔄 **`POST /tutor` → SYNCHRONOUS**: response berisi `balasan` langsung (sync-via-callback, timeout internal 90s)

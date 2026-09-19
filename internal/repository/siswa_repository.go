@@ -44,3 +44,17 @@ func (r *SiswaRepository) FindByKelasID(kelasID uint) ([]model.Siswa, error) {
 	}
 	return siswas, nil
 }
+// FindBySessionID mencari siswa berdasarkan session ID (auth tanpa token).
+func (r *SiswaRepository) FindBySessionID(sessionID string) (*model.Siswa, error) {
+	var siswa model.Siswa
+	err := r.db.Where("session_id = ? AND session_id <> ''", sessionID).First(&siswa).Error
+	if err != nil {
+		return nil, err
+	}
+	return &siswa, nil
+}
+
+// SetSessionID mengikat session ID percakapan ke satu siswa.
+func (r *SiswaRepository) SetSessionID(siswaID uint, sessionID string) error {
+	return r.db.Model(&model.Siswa{}).Where("id = ?", siswaID).Update("session_id", sessionID).Error
+}

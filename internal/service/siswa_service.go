@@ -157,3 +157,8 @@ func (s *SiswaService) GetMateriForSiswa(siswaID, kelasID, modulID uint) ([]mode
 
 	return materiList, nil
 }
+
+// LinkSession mengikat session percakapan ke siswa (pengganti token untuk alur suara).
+func (s *SiswaService) LinkSession(siswaID uint, sessionID string) error {
+	return s.repo.SetSessionID(siswaID, sessionID)
+}
