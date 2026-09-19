@@ -9,8 +9,9 @@ import (
 type Role string
 
 const (
-	RoleGuru  Role = "guru"
-	RoleSiswa Role = "siswa"
+	RoleGuru   Role = "guru"
+	RoleSiswa  Role = "siswa"
+	RolePublic Role = "public" // BARU: listener tanpa token (mode demo/stream terbuka)
 )
 
 // Scope event (siapa yang boleh terima)
@@ -25,7 +26,7 @@ const (
 // Client adalah subscriber SSE
 type Client struct {
 	Role    Role
-	SiswaID uint // BARU: untuk tutor-reply (khusus siswa)
+	SiswaID uint // untuk tutor-reply (khusus siswa)
 	Events  chan Event
 	Done    chan struct{}
 }
@@ -87,7 +88,9 @@ func (h *Hub) run() {
 	}
 }
 
-// shouldDeliver cek apakah client boleh terima event berdasarkan role
+// shouldDeliver cek apakah client boleh terima event berdasarkan role.
+// RolePublic (listener tanpa token) menerima event scope siswa + all,
+// TIDAK menerima event scope guru (nilai/jawaban siswa tetap aman).
 func shouldDeliver(client *Client, event Event) bool {
 	switch event.Scope {
 	case ScopeAll:
@@ -95,7 +98,7 @@ func shouldDeliver(client *Client, event Event) bool {
 	case ScopeGuru:
 		return client.Role == RoleGuru
 	case ScopeSiswa:
-		return client.Role == RoleSiswa
+		return client.Role == RoleSiswa || client.Role == RolePublic
 	}
 	return false
 }
@@ -120,7 +123,7 @@ func (h *Hub) BroadcastToGuru(eventType string, data interface{}) {
 	h.Broadcast(eventType, data, ScopeGuru)
 }
 
-// BroadcastToSiswa kirim event khusus siswa (ke semua siswa)
+// BroadcastToSiswa kirim event khusus siswa (ke semua siswa + listener public)
 func (h *Hub) BroadcastToSiswa(eventType string, data interface{}) {
 	h.Broadcast(eventType, data, ScopeSiswa)
 }
@@ -131,13 +134,16 @@ func (h *Hub) BroadcastToAll(eventType string, data interface{}) {
 }
 
 // BroadcastToSiswaByID kirim event ke siswa tertentu (untuk tutor-reply).
-// Hanya siswa dengan SiswaID yang cocok yang akan terima event ini.
+// Listener public (tanpa token) ikut menerima sebagai fallback mode demo,
+// supaya alur tutor bisa dipertontonkan tanpa auth.
 func (h *Hub) BroadcastToSiswaByID(eventType string, data interface{}, siswaID uint) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for client := range h.clients {
-		if client.Role == RoleSiswa && client.SiswaID == siswaID {
+		match := (client.Role == RoleSiswa && client.SiswaID == siswaID) ||
+			client.Role == RolePublic
+		if match {
 			select {
 			case client.Events <- Event{Type: eventType, Data: data, Scope: ScopeSiswa}:
 			default:

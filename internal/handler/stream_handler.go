@@ -18,8 +18,8 @@ func NewStreamHandler(hub *sse.Hub) *StreamHandler {
 }
 
 // HandleStream adalah endpoint unified stream: GET /api/v1/stream
-// Role-aware: menerima token guru ATAU siswa, memfilter event per role.
-// Token bisa dikirim via header Authorization: Bearer <token> ATAU query param ?token=<token>.
+// Role-aware: menerima token guru, token siswa, ATAU tanpa token (mode public).
+// Token bisa via header Authorization ATAU query param ?token=.
 func (h *StreamHandler) HandleStream(c *gin.Context) {
 	roleVal, exists := c.Get("role")
 	if !exists {
@@ -33,6 +33,8 @@ func (h *StreamHandler) HandleStream(c *gin.Context) {
 		role = sse.RoleGuru
 	case "siswa":
 		role = sse.RoleSiswa
+	case "public":
+		role = sse.RolePublic
 	default:
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Role tidak valid"})
 		return
@@ -52,7 +54,7 @@ func (h *StreamHandler) HandleStream(c *gin.Context) {
 		Done:   make(chan struct{}),
 	}
 
-	// BARU: Set SiswaID untuk role siswa (untuk tutor-reply routing)
+	// Set SiswaID untuk role siswa (untuk tutor-reply routing)
 	if role == sse.RoleSiswa {
 		if siswaIDVal, exists := c.Get("siswa_id"); exists {
 			client.SiswaID = siswaIDVal.(uint)
