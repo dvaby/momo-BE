@@ -171,3 +171,17 @@ func (s *SiswaService) NamaKelasByID(kelasID uint) (string, error) {
 	}
 	return kelas.NamaKelas, nil
 }
+// KontenKelas berisi jumlah materi & soal yang tersedia di suatu kelas.
+type KontenKelas struct {
+	JumlahMateri int `json:"jumlah_materi"`
+	JumlahSoal   int `json:"jumlah_soal"`
+}
+
+
+// HitungKontenKelas menghitung jumlah materi & soal di kelas via repository.
+func (s *SiswaService) HitungKontenKelas(kelasID uint) KontenKelas {
+	return KontenKelas{
+		JumlahMateri: int(s.kelasRepo.HitungMateriKelas(kelasID)),
+		JumlahSoal:   int(s.kelasRepo.HitungSoalKelas(kelasID)),
+	}
+}

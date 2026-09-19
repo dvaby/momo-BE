@@ -105,3 +105,24 @@ func (r *KelasRepository) FindByGuruIDWithPagination(guruID uint, limit, offset 
 
 	return kelass, total, nil
 }
+// HitungMateriKelas menghitung total materi di semua modul milik kelas.
+func (r *KelasRepository) HitungMateriKelas(kelasID uint) int64 {
+	var count int64
+	r.db.Table("materis").
+		Joins("JOIN moduls ON moduls.id = materis.modul_id").
+		Joins("JOIN kelas_moduls ON kelas_moduls.modul_id = moduls.id").
+		Where("kelas_moduls.kelas_id = ?", kelasID).
+		Count(&count)
+	return count
+}
+
+// HitungSoalKelas menghitung total soal di semua modul milik kelas.
+func (r *KelasRepository) HitungSoalKelas(kelasID uint) int64 {
+	var count int64
+	r.db.Table("soals").
+		Joins("JOIN moduls ON moduls.id = soals.modul_id").
+		Joins("JOIN kelas_moduls ON kelas_moduls.modul_id = moduls.id").
+		Where("kelas_moduls.kelas_id = ?", kelasID).
+		Count(&count)
+	return count
+}
