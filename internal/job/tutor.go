@@ -16,56 +16,37 @@ type TutorResult struct {
 // ParseTutorFull ekstrak hasil tutor lengkap (balasan + fase + extract).
 // Mendukung bentuk datar {"balasan":...} maupun wrapped {"data":{"balasan":...}}.
 func ParseTutorFull(raw json.RawMessage) (*TutorResult, error) {
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("hasil callback kosong")
+	// Parse ke map dulu biar 100% aman dari struktur JSON yang berubah-ubah atau field kosong
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("gagal unmarshal hasil tutor: %w", err)
 	}
 
-	var node map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &node); err != nil {
-		return nil, fmt.Errorf("hasil callback bukan JSON object: %w", err)
+	// 1. Ambil balasan (kasih fallback kalau AI ngirim string kosong)
+	balasan, _ := payload["balasan"].(string)
+	if balasan == "" {
+		balasan = "Maaf, aku kurang jelas mendengar. Bisa diulangi?"
 	}
 
-	// Kalau wrapped {data:{...}} dan inner punya balasan, pakai inner
-	if inner, ok := node["data"]; ok {
-		var innerMap map[string]json.RawMessage
-		if err := json.Unmarshal(inner, &innerMap); err == nil {
-			if _, has := innerMap["balasan"]; has {
-				node = innerMap
-			}
-		}
+	// 2. Ambil fase
+	fase, _ := payload["fase"].(string)
+	if fase == "" {
+		fase = "onboarding"
 	}
 
-	out := &TutorResult{}
-	for _, key := range []string{"balasan", "jawaban", "response"} {
-		if v, ok := node[key]; ok {
-			var s string
-			if json.Unmarshal(v, &s) == nil && s != "" {
-				out.Balasan = s
-				break
-			}
-		}
-	}
-	if out.Balasan == "" {
-		return nil, fmt.Errorf("bentuk hasil tutor tidak dikenali: %s", string(raw))
+	// 3. Ambil extract (nama & kode_kelas)
+	var extractNama, extractKode string
+	if ext, ok := payload["extract"].(map[string]interface{}); ok {
+		extractNama, _ = ext["nama"].(string)
+		extractKode, _ = ext["kode_kelas"].(string)
 	}
 
-	if v, ok := node["fase"]; ok {
-		var s string
-		if json.Unmarshal(v, &s) == nil {
-			out.Fase = s
-		}
-	}
-	if v, ok := node["extract"]; ok {
-		var ex struct {
-			Nama      string `json:"nama"`
-			KodeKelas string `json:"kode_kelas"`
-		}
-		if json.Unmarshal(v, &ex) == nil {
-			out.ExtractNama = ex.Nama
-			out.ExtractKode = ex.KodeKelas
-		}
-	}
-	return out, nil
+	return &TutorResult{
+		Balasan:     balasan,
+		Fase:        fase,
+		ExtractNama: extractNama,
+		ExtractKode: extractKode,
+	}, nil
 }
 
 // ParseTutorResult ekstrak hanya teks balasan (kompatibel lama, dipakai callback handler).
