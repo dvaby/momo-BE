@@ -178,12 +178,27 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		if (isKonfirmasi && lastCode != "") || (out.ExtractNama != "" && out.ExtractKode != "") {
 			s.handleAutoJoin(sessionID, out)
 		}
-	} else {
+		} else {
 		// 4. PENGAMAN: sudah join tapi AI masih minta kode -> ganti balasannya
+		// HANYA override kalau AI BENAR-BENAR MINTA kode (bukan menyebut kode valid)
 		balasanLower := strings.ToLower(out.Balasan)
-		mintaKode := strings.Contains(balasanLower, "kode kelas") &&
-			(strings.Contains(balasanLower, "sebutkan") || strings.Contains(balasanLower, "belum benar") ||
-				strings.Contains(balasanLower, "belum terkonfirmasi") || strings.Contains(balasanLower, "sebutkan lagi"))
+		kataMintaKode := []string{
+			"sebutkan kode",
+			"kodenya belum benar",
+			"kodenya belum terkonfirmasi",
+			"sebutkan lagi kode",
+			"sebutkan kembali kode",
+			"coba sebutkan kode",
+			"bisa sebutkan kode",
+			"belum terkonfirmasi",
+		}
+		mintaKode := false
+		for _, kata := range kataMintaKode {
+			if strings.Contains(balasanLower, kata) {
+				mintaKode = true
+				break
+			}
+		}
 		if mintaKode {
 			out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, tidak perlu kode lagi. Hari ini kamu mau belajar apa?", storedKelas)
 			out.Fase = "belajar"
