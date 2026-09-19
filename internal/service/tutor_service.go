@@ -141,7 +141,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		ExtractKode: res.ExtractKode,
 	}
 
-	// 2. CEK APAKAH USER SEDANG KONFIRMASI ("ya", "benar", "betul")
+		// 2. CEK APAKAH USER SEDANG KONFIRMASI ("ya", "benar", "betul")
 	pesanLower := strings.ToLower(pesanSiswa)
 	isKonfirmasi := konfirmasiRe.MatchString(pesanLower) && !negasiRe.MatchString(pesanLower)
 
@@ -150,16 +150,14 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	joined := s.sessionJoined[sessionID]
 	s.mu.Unlock()
 
-	// 3. TRIGGER AUTO-JOIN HANYA JIKA:
-	//    - User konfirmasi ("ya benar") DAN ada kode yang direkam sebelumnya
-	//    - ATAU AI langsung kirim extract lengkap (fallback)
+	// 3. TRIGGER AUTO-JOIN: HANYA JIKA USER KONFIRMASI
 	shouldTryJoin := false
 	if !joined {
 		if isKonfirmasi && lastCode != "" {
 			shouldTryJoin = true
-		} else if out.ExtractNama != "" && out.ExtractKode != "" {
-			shouldTryJoin = true
 		}
+		// KITA HAPUS FALLBACK "ExtractNama && ExtractKode" 
+		// supaya backend tidak join prematur saat AI baru sekadar mengonfirmasi digit.
 	}
 
 	if shouldTryJoin {
