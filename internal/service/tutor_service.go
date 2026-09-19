@@ -20,11 +20,12 @@ type JoinInfo struct {
 	KelasID   uint   `json:"kelas_id"`
 	Nama      string `json:"nama"`
 	KelasNama string `json:"kelas_nama"`
-	Token     string `json:"token"` // AUTH — hanya keluar jika kode kelas VALID
+	Token     string `json:"token"`
 }
 
-// ChatResult adalah response lengkap percakapan dengan satpam (AI onboarding).
+// ChatResult adalah response lengkap percakapan.
 type ChatResult struct {
+	JobID       string    `json:"job_id"`
 	Balasan     string    `json:"balasan"`
 	Fase        string    `json:"fase"`
 	ExtractNama string    `json:"extract_nama"`
@@ -34,14 +35,13 @@ type ChatResult struct {
 }
 
 type TutorService struct {
-	aiClient     *aiclient.Client
-	jobRegistry  *job.Registry
-	callbackURL  string
-	siswaService *SiswaService
-
+	aiClient          *aiclient.Client
+	jobRegistry       *job.Registry
+	callbackURL       string
+	siswaService      *SiswaService
 	mu                sync.Mutex
 	sessionLastCode   map[string]string // session -> kode 6 digit terakhir yang disebut siswa
-	sessionFailedCode map[string]string // session -> kode yang gagal join (jangan di-retry buta)
+	sessionFailedCode map[string]string // session -> kode yang gagal join
 	sessionJoined     map[string]bool   // session yang sudah sukses join
 }
 
@@ -80,8 +80,7 @@ func kodeKelasValid(kode string) bool {
 	return true
 }
 
-// sanitizeNama membersihkan artefak padding backend dari nama hasil extract AI.
-// Contoh kotor: "Siswa menjawab: halo oke" -> "halo oke"
+// sanitizeNama membersihkan artefak padding dan kata konfirmasi dari nama.
 func sanitizeNama(nama string) string {
 	n := strings.TrimSpace(nama)
 	if idx := strings.Index(n, "menjawab:"); idx >= 0 {
@@ -90,14 +89,12 @@ func sanitizeNama(nama string) string {
 	return strings.TrimSpace(n)
 }
 
-// bersihPadding menghapus artefak padding backend yang kadang di-echo AI
-// (misal balasan: "Terima kasih, Siswa menjawab: ya benar." -> "Terima kasih, ya benar.")
+// bersihPadding menghapus artefak padding dari balasan AI.
 func bersihPadding(s string) string {
 	return strings.ReplaceAll(s, paddingMarker, "")
 }
 
-// ProcessTutor = SATU API percakapan + AUTO-JOIN onboarding.
-// Backend pemegang kebenaran: balasan final ditentukan hasil join, bukan klaim AI.
+// ProcessTutor mengembalikan 2 value: (*ChatResult, error) untuk mencegah mismatch di handler.
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
@@ -137,6 +134,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	}
 
 	out := &ChatResult{
+		JobID:       jobID, // Masukkan job_id ke dalam struct result
 		Balasan:     bersihPadding(res.Balasan),
 		Fase:        res.Fase,
 		ExtractNama: sanitizeNama(res.ExtractNama),
@@ -154,7 +152,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 
 	// 3. TRIGGER AUTO-JOIN HANYA JIKA:
 	//    - User konfirmasi ("ya benar") DAN ada kode yang direkam sebelumnya
-	//    - ATAU AI langsung kirim extract lengkap (fallback jaga-jaga)
+	//    - ATAU AI langsung kirim extract lengkap (fallback)
 	shouldTryJoin := false
 	if !joined {
 		if isKonfirmasi && lastCode != "" {
@@ -182,7 +180,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 	s.mu.Unlock()
 
 	if joined {
-		return // sudah punya auth, tidak perlu cek lagi
+		return
 	}
 
 	// Prioritaskan kode yang benar-benar disebut siswa; fallback ke extract AI
@@ -199,7 +197,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		return
 	}
 
-	// Kode ini sudah gagal sebelumnya -> jangan retry buta, minta kode lain
+	// Cooldown: Kode ini sudah gagal sebelumnya -> jangan retry buta
 	if candidate == failed {
 		out.JoinError = "kelas dengan kode '" + candidate + "' tidak ditemukan"
 		out.Fase = "onboarding"
@@ -208,9 +206,13 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		return
 	}
 
-	namaJoin := out.ExtractNama
-	if namaJoin == "" {
-		namaJoin = "Siswa"
+	// Sanitize nama: reject kalau isinya cuma kata konfirmasi ("ya", "benar")
+	namaJoin := sanitizeNama(out.ExtractNama)
+	namaLower := strings.ToLower(namaJoin)
+	konfirmasiOnly := konfirmasiRe.MatchString(namaLower) && len(strings.Fields(namaJoin)) <= 2
+
+	if namaJoin == "" || konfirmasiOnly {
+		namaJoin = "Siswa" // fallback ke nama generik
 	}
 
 	siswa, token, errJoin := s.siswaService.JoinSiswa(candidate, namaJoin)

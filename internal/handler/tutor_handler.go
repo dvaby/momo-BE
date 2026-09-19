@@ -23,7 +23,6 @@ type tutorRequest struct {
 	Pesan     string `json:"pesan" binding:"required"`
 	KelasNama string `json:"kelas_nama"`
 	SessionID string `json:"session_id"`
-	// KodeKelas tidak perlu dikirim FE lagi, backend otomatis extract dari teks pesan
 }
 
 // SubmitTutor — POST /api/v1/chat
@@ -34,7 +33,6 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		return
 	}
 
-	// Pegangan obrolan: pakai yang dikirim FE, atau buat baru untuk pengunjung pertama
 	sessionID := req.SessionID
 	if sessionID == "" {
 		sessionID = job.GenerateID("anon")
@@ -45,8 +43,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	// Panggil service dengan 3 argument (sessionID, kelasNama, pesan)
-	// Return value cuma 2 (res, err) karena job_id sudah di-handle internal
+	// Panggil service dengan 2 return value (res, err)
 	res, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
 	if err != nil {
 		errMsg := err.Error()
@@ -61,9 +58,10 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		return
 	}
 
-	// Response bersih ke FE: tanpa job_id
+	// Response ke FE: job_id dan session_id tetap ada
 	c.JSON(http.StatusOK, gin.H{
 		"message":    "Balasan tutor diterima",
+		"job_id":     res.JobID,
 		"session_id": sessionID,
 		"balasan":    res.Balasan,
 		"fase":       res.Fase,
@@ -71,7 +69,7 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 			"nama":       res.ExtractNama,
 			"kode_kelas": res.ExtractKode,
 		},
-		"join":       res.Join,      // berisi token HANYA jika kode kelas valid
-		"join_error": res.JoinError, // terisi jika kode tidak valid
+		"join":       res.Join,
+		"join_error": res.JoinError,
 	})
 }
