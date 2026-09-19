@@ -59,9 +59,6 @@ func kodeKelasValid(kode string) bool {
 	return true
 }
 
-// ProcessTutor = SATU API percakapan + AUTO-JOIN onboarding.
-// Saat extract lengkap: backend join siswa + IKAT session_id ke siswa itu,
-// sehingga session yang sama langsung berlaku untuk endpoint siswa lainnya.
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, string, error) {
 	jobID := job.GenerateID("tutor")
 
@@ -69,7 +66,14 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 
 	konteks := fmt.Sprintf("Kelas: %s | Session: %s", kelasNama, sessionID)
 
-	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, pesanSiswa, konteks, sessionID)
+	// PATCH: padding pesan agar tidak ditolak AI Service (min 10 karakter)
+	// Kalau pesan pendek seperti "Halo" / "Ya" / "Benar", tambahkan prefix konteks
+	teksKirim := pesanSiswa
+	if len(pesanSiswa) < 10 {
+		teksKirim = fmt.Sprintf("Siswa menjawab: %s", pesanSiswa)
+	}
+
+	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, teksKirim, konteks, sessionID)
 	if err != nil {
 		log.Printf("[tutor] gagal kirim job %s: %v", jobID, err)
 		return nil, jobID, fmt.Errorf("gagal menghubungi AI Service: %w", err)
@@ -97,8 +101,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		ExtractKode: res.ExtractKode,
 	}
 
-	// AUTO-JOIN + IKAT SESSION: onboarding lengkap → siswa terdaftar,
-	// session_id menjadi identitas siswa untuk semua endpoint berikutnya.
 	if out.ExtractNama != "" && out.ExtractKode != "" {
 		if !kodeKelasValid(out.ExtractKode) {
 			out.JoinError = "Kode kelas harus enam digit angka. Sebutkan ulang kode kelas kamu ya."

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -16,7 +17,7 @@ import (
 type AICallbackHandler struct {
 	registry    *job.Registry
 	internalKey string
-	hub         *sse.Hub // BARU: untuk emit tutor-reply
+	hub         *sse.Hub
 }
 
 func NewAICallbackHandler(registry *job.Registry, internalKey string, hub *sse.Hub) *AICallbackHandler {
@@ -30,6 +31,7 @@ func NewAICallbackHandler(registry *job.Registry, internalKey string, hub *sse.H
 // Handle menerima callback dari AI Service setelah job selesai.
 // Autentikasi via query param `token` yang disisipkan di callback_url oleh backend.
 func (h *AICallbackHandler) Handle(c *gin.Context) {
+	// 1. Validasi token
 	token := c.Query("token")
 	if token != h.internalKey || h.internalKey == "" {
 		log.Printf("[ai-callback] REJECTED: token tidak valid (dapat '%s')", token)
@@ -37,12 +39,14 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 		return
 	}
 
+	// 2. Baca body
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "gagal baca body"})
 		return
 	}
 
+	// 3. Parse body
 	var req job.CallbackRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "body bukan JSON valid"})
@@ -60,6 +64,7 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 	}
 	log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s, hasil=%s", req.JobID, req.Tipe, req.Status, rawHasil)
 
+	// 4. Switch berdasarkan status
 	switch req.Status {
 	case "success":
 		if err := h.registry.Complete(req.JobID, req.Hasil); err != nil {
@@ -68,35 +73,9 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 			return
 		}
 
-		// BARU: kalau job tutor, emit event tutor-reply ke siswa spesifik
+		// Khusus tutor: emit event tutor-reply ke siswa spesifik + fallback public listener
 		if req.Tipe == string(job.JobTypeTutor) && h.hub != nil {
-			jawaban, parseErr := job.ParseTutorResult(req.Hasil)
-			if parseErr != nil {
-				log.Printf("[ai-callback] tutor parse error: %v", parseErr)
-				jawaban = "Maaf, aku belum bisa memahami pesanmu. Coba lagi ya."
-			}
-
-			// Ambil siswa_id dari registry (disimpan di SessionID)
-			var siswaID uint
-			if jobInfo := h.registry.Get(req.JobID); jobInfo != nil && jobInfo.SessionID != "" {
-				if id, err := strconv.ParseUint(jobInfo.SessionID, 10, 64); err == nil {
-					siswaID = uint(id)
-				}
-			}
-
-			if siswaID > 0 {
-				h.hub.BroadcastToSiswaByID("tutor-reply", map[string]interface{}{
-					"job_id":  req.JobID,
-					"balasan": jawaban,
-				}, siswaID)
-				shortJawaban := jawaban
-				if len(shortJawaban) > 50 {
-					shortJawaban = shortJawaban[:50] + "..."
-				}
-				log.Printf("[ai-callback] tutor-reply emitted ke siswa %d: %s", siswaID, shortJawaban)
-			} else {
-				log.Printf("[ai-callback] WARNING: siswa_id tidak ditemukan di registry untuk job %s", req.JobID)
-			}
+			h.handleTutorSuccess(req)
 		}
 
 	case "failed":
@@ -106,17 +85,9 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 			return
 		}
 
-		// Kalau tutor gagal, tetap emit event dengan pesan error
+		// Kalau tutor gagal, tetap emit event dengan balasan error ramah
 		if req.Tipe == string(job.JobTypeTutor) && h.hub != nil {
-			if jobInfo := h.registry.Get(req.JobID); jobInfo != nil && jobInfo.SessionID != "" {
-				if id, err := strconv.ParseUint(jobInfo.SessionID, 10, 64); err == nil {
-					h.hub.BroadcastToSiswaByID("tutor-reply", map[string]interface{}{
-						"job_id": req.JobID,
-						"balasan": "Maaf, aku sedang mengalami kesulitan. Silakan coba lagi.",
-						"error":  true,
-					}, uint(id))
-				}
-			}
+			h.handleTutorFailed(req)
 		}
 
 	default:
@@ -125,4 +96,80 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "job_id": req.JobID})
+}
+
+// handleTutorSuccess emit event tutor-reply setelah callback sukses.
+// Route ke siswa spesifik jika ada siswa_id, fallback ke listener public untuk demo.
+func (h *AICallbackHandler) handleTutorSuccess(req job.CallbackRequest) {
+	jawaban, parseErr := job.ParseTutorResult(req.Hasil)
+	if parseErr != nil {
+		log.Printf("[ai-callback] tutor parse error: %v", parseErr)
+		jawaban = "Maaf, aku belum bisa memahami pesanmu. Coba lagi ya."
+	}
+
+	siswaID := h.extractSiswaID(req.JobID)
+
+	if siswaID > 0 {
+		h.hub.BroadcastToSiswaByID("tutor-reply", map[string]interface{}{
+			"job_id":  req.JobID,
+			"balasan": jawaban,
+		}, siswaID)
+		shortJawaban := jawaban
+		if len(shortJawaban) > 50 {
+			shortJawaban = shortJawaban[:50] + "..."
+		}
+		log.Printf("[ai-callback] tutor-reply emitted ke siswa %d: %s", siswaID, shortJawaban)
+	} else {
+		// Fallback untuk session anonim (demo/listener public)
+		h.hub.BroadcastToSiswa("tutor-reply", map[string]interface{}{
+			"job_id":  req.JobID,
+			"balasan": jawaban,
+		})
+		shortJawaban := jawaban
+		if len(shortJawaban) > 50 {
+			shortJawaban = shortJawaban[:50] + "..."
+		}
+		log.Printf("[ai-callback] tutor-reply emitted ke public listener: %s", shortJawaban)
+	}
+}
+
+// handleTutorFailed emit event tutor-reply dengan balasan error ramah
+// supaya FE tetap bisa speak pesan yang sopan alih-alih stuck.
+func (h *AICallbackHandler) handleTutorFailed(req job.CallbackRequest) {
+	siswaID := h.extractSiswaID(req.JobID)
+	payload := map[string]interface{}{
+		"job_id":  req.JobID,
+		"balasan": "Maaf, aku sedang mengalami kesulitan. Silakan coba lagi.",
+		"error":   true,
+	}
+
+	if siswaID > 0 {
+		h.hub.BroadcastToSiswaByID("tutor-reply", payload, siswaID)
+		log.Printf("[ai-callback] tutor-reply (failed) emitted ke siswa %d", siswaID)
+	} else {
+		h.hub.BroadcastToSiswa("tutor-reply", payload)
+		log.Printf("[ai-callback] tutor-reply (failed) emitted ke public listener")
+	}
+}
+
+// extractSiswaID mengambil siswa_id dari SessionID di registry.
+// Session anonim (prefix "anon_") return 0 tanpa warning.
+// Session non-anonim yang gagal di-parse → log warning.
+func (h *AICallbackHandler) extractSiswaID(jobID string) uint {
+	jobInfo := h.registry.Get(jobID)
+	if jobInfo == nil || jobInfo.SessionID == "" {
+		return 0
+	}
+
+	// Session anonim: tidak ada siswa_id, tidak perlu warning
+	if strings.HasPrefix(jobInfo.SessionID, "anon_") {
+		return 0
+	}
+
+	id, err := strconv.ParseUint(jobInfo.SessionID, 10, 64)
+	if err != nil {
+		log.Printf("[ai-callback] WARNING: siswa_id tidak ditemukan di registry untuk job %s (session_id=%s)", jobID, jobInfo.SessionID)
+		return 0
+	}
+	return uint(id)
 }
