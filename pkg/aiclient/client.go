@@ -207,14 +207,16 @@ func (c *Client) EvaluateAnswerWithJob(req EvaluateRequest) (*DualModeResult, er
 // ============================================================
 
 // SubmitTutor kirim request tutor ke AI Service endpoint /process dengan tipe=tutor.
+// sessionID dipakai AI Service sebagai key memory percakapan (Redis).
 // Return error hanya kalau gagal kirim. Sukses = AI akan callback nanti.
-func (c *Client) SubmitTutor(jobID, callbackURL, pesanSiswa, konteks string) error {
-	reqBody := ProcessRequest{
-		Tipe:        "tutor",
-		TeksMentah:  pesanSiswa,
-		JobID:       jobID,
-		CallbackURL: callbackURL,
-		Konteks:     konteks,
+func (c *Client) SubmitTutor(jobID, callbackURL, pesanSiswa, konteks, sessionID string) error {
+	reqBody := map[string]string{
+		"tipe":         "tutor",
+		"teks_mentah":  pesanSiswa,
+		"job_id":       jobID,
+		"callback_url": callbackURL,
+		"konteks":      konteks,
+		"session_id":   sessionID,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -238,7 +240,6 @@ func (c *Client) SubmitTutor(jobID, callbackURL, pesanSiswa, konteks string) err
 		return fmt.Errorf("AI Service return status %d", resp.StatusCode)
 	}
 
-	// Parse ACK response
 	var ack struct {
 		Accepted bool   `json:"accepted"`
 		JobID    string `json:"job_id"`

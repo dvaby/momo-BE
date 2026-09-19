@@ -81,7 +81,8 @@ siswaAuth.Use(middleware.AuthMiddleware())
 	siswaAuth.GET("/siswa/modul/:id", siswaHandler.GetModulDetailForSiswa)
 	siswaAuth.GET("/siswa/modul/:id/materi", siswaHandler.GetMateriForSiswa)
 	siswaAuth.GET("/siswa/modul/:id/soal", soalHandler.GetSoalByModul)
-	siswaAuth.POST("/tutor", middleware.RateLimiterMiddleware(aiLimiter), tutorHandler.SubmitTutor) // BARU
+	siswaAuth.POST("/tutor", middleware.RateLimiterMiddleware(aiLimiter), tutorHandler.SubmitTutor)
+	siswaAuth.POST("/chat", middleware.RateLimiterMiddleware(aiLimiter), tutorHandler.SubmitTutor)
 }
 
 		// ==================== GURU ENDPOINTS ====================

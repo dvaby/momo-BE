@@ -28,24 +28,23 @@ func NewTutorService(
 	}
 }
 
-// ProcessTutor mengirim pesan siswa ke AI Service dan MENUNGGU balasan
-// (sync-via-callback, pola sama seperti submit-jawaban).
-// Return: balasan teks, jobID, error.
+// ProcessTutor = SATU API percakapan: kirim pesan ke AI, tunggu reasoning,
+// return balasan teks. Pola sync-via-callback (sama seperti submit-jawaban).
 func (s *TutorService) ProcessTutor(siswaID uint, kelasNama string, pesanSiswa string) (string, string, error) {
 	jobID := job.GenerateID("tutor")
+	sessionID := fmt.Sprintf("siswa-%d", siswaID) // key memory percakapan di AI Service
 
-	// Register job; siswa_id disimpan di SessionID untuk routing event stream
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", strconv.FormatUint(uint64(siswaID), 10))
 
 	konteks := fmt.Sprintf("Kelas: %s | Siswa ID: %d", kelasNama, siswaID)
 
-	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, pesanSiswa, konteks)
+	err := s.aiClient.SubmitTutor(jobID, s.callbackURL, pesanSiswa, konteks, sessionID)
 	if err != nil {
 		log.Printf("[tutor] gagal kirim job %s: %v", jobID, err)
 		return "", jobID, fmt.Errorf("gagal menghubungi AI Service: %w", err)
 	}
 
-	log.Printf("[tutor] job %s dikirim, menunggu callback (max 90 detik)...", jobID)
+	log.Printf("[tutor] job %s (session %s) dikirim, menunggu reasoning AI...", jobID, sessionID)
 
 	finished := s.jobRegistry.WaitSync(jobID, 90*time.Second)
 	if finished == nil {
