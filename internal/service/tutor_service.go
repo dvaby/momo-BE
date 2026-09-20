@@ -32,7 +32,6 @@ type ChatResult struct {
 	JoinError   string    `json:"join_error,omitempty"`
 }
 
-// StateBelajar melacak progres pembelajaran siswa
 type StateBelajar struct {
 	Fase         string `json:"fase"`
 	MateriID     uint   `json:"materi_id"`
@@ -109,6 +108,31 @@ func kodeKelasValid(kode string) bool {
 		}
 	}
 	return true
+}
+
+// extractKodeKelas mengekstrak kode 6 digit dari pesan, support format:
+// - "123456" (berdekatan)
+// - "1 2 3 4 5 6" (terpisah spasi)
+// - "1.2.3.4.5.6" (terpisah titik)
+func extractKodeKelas(pesan string) string {
+	// Format berdekatan dulu (paling umum)
+	if m := sixDigits.FindString(pesan); m != "" {
+		return m
+	}
+
+	// Fallback: ekstrak semua digit dari pesan
+	var digits []rune
+	for _, r := range pesan {
+		if r >= '0' && r <= '9' {
+			digits = append(digits, r)
+		}
+	}
+	// Kalau ada tepat 6 digit (tidak lebih, tidak kurang), anggap itu kode
+	if len(digits) == 6 {
+		return string(digits)
+	}
+
+	return ""
 }
 
 func sanitizeNama(nama string) string {
@@ -225,10 +249,12 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	jobID := job.GenerateID("tutor")
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
 
-	if m := sixDigits.FindString(pesanSiswa); m != "" {
+	// 1. REKAM kode 6 digit - support format berdekatan & terpisah
+	if kode := extractKodeKelas(pesanSiswa); kode != "" {
 		s.mu.Lock()
-		s.sessionLastCode[sessionID] = m
+		s.sessionLastCode[sessionID] = kode
 		s.mu.Unlock()
+		log.Printf("[tutor] kode terekam dari ucapan user: %s (session %s)", kode, sessionID)
 	}
 
 	s.mu.Lock()
@@ -338,7 +364,17 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	aiMintaNama := mintaNamaPositif
 
 	pesanLower := strings.ToLower(pesanSiswa)
-	isKonfirmasi := konfirmasiRe.MatchString(pesanLower) && !negasiRe.MatchString(pesanLower)
+	
+	// Tambah frasa "sudah benar", "sudah betul", "oke benar" sebagai konfirmasi
+	konfirmTambahan := strings.Contains(pesanLower, "sudah benar") ||
+		strings.Contains(pesanLower, "sudah betul") ||
+		strings.Contains(pesanLower, "oke benar") ||
+		strings.Contains(pesanLower, "iya benar") ||
+		strings.Contains(pesanLower, "ya benar")
+	isKonfirmasi := (konfirmasiRe.MatchString(pesanLower) || konfirmTambahan) && !negasiRe.MatchString(pesanLower)
+
+	log.Printf("[tutor] pesan=%q isKonfirmasi=%v lastCode=%q extractKode=%q (session %s)",
+		pesanSiswa, isKonfirmasi, lastCode, out.ExtractKode, sessionID)
 
 	if !alreadyJoined {
 		switch {
@@ -355,8 +391,19 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			out.Balasan = "Sebelum kita lanjut ke kode kelas, boleh tahu dulu nama kamu? Sebutkan nama kamu ya."
 			out.Fase = "onboarding"
 			out.ExtractKode = ""
-		case isKonfirmasi && lastCode != "":
-			s.handleAutoJoin(sessionID, out)
+		case isKonfirmasi:
+			// Fallback: kalau ucapan user tidak terdeteksi regex, pakai extract AI
+			if lastCode != "" {
+				s.handleAutoJoin(sessionID, out)
+			} else if kodeKelasValid(out.ExtractKode) {
+				s.mu.Lock()
+				s.sessionLastCode[sessionID] = out.ExtractKode
+				s.mu.Unlock()
+				log.Printf("[tutor] fallback: pakai extract AI sebagai kode (%s)", out.ExtractKode)
+				s.handleAutoJoin(sessionID, out)
+			} else {
+				log.Printf("[tutor] konfirmasi diterima tapi tidak ada kode valid, skip join")
+			}
 		}
 
 		if out.Fase == "belajar" && out.Join == nil {
@@ -469,7 +516,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 				delete(s.sessionBelajar, sessionID)
 				s.mu.Unlock()
 
-				// FIX: selalu set balasan penutup, jangan biarkan balasan AI nyasar lolos
 				if niat == "materi" {
 					out.Balasan = fmt.Sprintf("Semangat belajar, %s! Sebutkan saja 'aku mau materi', nanti aku tampilkan lagi daftar materi yang bisa kamu pilih.", nama)
 				} else {
@@ -483,7 +529,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 				s.mu.Unlock()
 			}
 
-			// SAFETY NET: kalau setelah state machine balasan masih mengandung kata onboarding, ganti
 			if cekKataOnboarding(strings.ToLower(out.Balasan)) {
 				out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, %s. Tidak perlu kode atau nama lagi. Hari ini kamu mau belajar apa? Di kelas ini ada %d materi dan %d soal yang bisa kamu pelajari.",
 					storedKelas, nama, storedKonten.JumlahMateri, storedKonten.JumlahSoal)
@@ -493,7 +538,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			materiList, _ := s.siswaService.GetDaftarMateri(storedKelasID)
 
 			if len(materiList) > 0 {
-				// FIX: batasi list maksimal 5 biar TTS tidak kepanjangan
 				batas := len(materiList)
 				if batas > 5 {
 					batas = 5
