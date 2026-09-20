@@ -34,12 +34,12 @@ type ChatResult struct {
 
 // StateBelajar melacak progres pembelajaran siswa
 type StateBelajar struct {
-	Fase              string `json:"fase"` // "pilih_materi", "konfirmasi_materi", "siap_dengar", "baca_setengah", "tanya_paham", "lanjut_atau_ulang"
-	MateriID          uint   `json:"materi_id"`
-	MateriJudul       string `json:"materi_judul"`
-	MateriKonten      string `json:"materi_konten"`
-	ModulNama         string `json:"modul_nama"`
-	ProgressBaca      int    `json:"progress_baca"` // 0 = belum mulai, 50 = setengah, 100 = selesai
+	Fase         string `json:"fase"`
+	MateriID     uint   `json:"materi_id"`
+	MateriJudul  string `json:"materi_judul"`
+	MateriKonten string `json:"materi_konten"`
+	ModulNama    string `json:"modul_nama"`
+	ProgressBaca int    `json:"progress_baca"`
 }
 
 type TutorService struct {
@@ -56,7 +56,7 @@ type TutorService struct {
 	sessionNama       map[string]string
 	sessionKelasID    map[string]uint
 	sessionKonten     map[string]KontenKelas
-	sessionBelajar    map[string]*StateBelajar // NEW: state pembelajaran per session
+	sessionBelajar    map[string]*StateBelajar
 }
 
 var (
@@ -198,11 +198,9 @@ func cekKataOnboarding(balasanLower string) bool {
 	return false
 }
 
-// deteksiPilihanMateri mengecek apakah user menyebut nomor atau judul materi
 func deteksiPilihanMateri(pesan string, materiList []map[string]interface{}) (uint, string) {
 	p := strings.ToLower(strings.TrimSpace(pesan))
-	
-	// Cek apakah user menyebut angka (nomor materi)
+
 	numRe := regexp.MustCompile(`\b(\d+)\b`)
 	if matches := numRe.FindStringSubmatch(p); len(matches) > 1 {
 		idx := 0
@@ -213,7 +211,6 @@ func deteksiPilihanMateri(pesan string, materiList []map[string]interface{}) (ui
 		}
 	}
 
-	// Cek apakah user menyebut judul materi
 	for _, materi := range materiList {
 		judul := strings.ToLower(materi["judul"].(string))
 		if strings.Contains(p, judul) || strings.Contains(judul, p) {
@@ -247,12 +244,10 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	if alreadyJoined {
 		konteks += fmt.Sprintf(" | STATUS: ONBOARDING SELESAI. Siswa sudah terdaftar di kelas %s.", storedKelas)
 		konteks += fmt.Sprintf(" | KONTEN KELAS: %d materi, %d soal tersedia.", storedKonten.JumlahMateri, storedKonten.JumlahSoal)
-		
 		if stateBelajar != nil {
-			konteks += fmt.Sprintf(" | STATE BELAJAR: fase=%s, materi_id=%d, judul=%s, progress=%d%%.", 
-				stateBelajar.Fase, stateBelajar.MateriID, stateBelajar.MateriJudul, stateBelajar.ProgressBaca)
+			konteks += fmt.Sprintf(" | STATE BELAJAR: fase=%s, materi=%s, progress=%d%%.",
+				stateBelajar.Fase, stateBelajar.MateriJudul, stateBelajar.ProgressBaca)
 		}
-		
 		konteks += " JANGAN minta kode kelas atau nama lagi; langsung lanjut mode belajar."
 	} else {
 		konteks += " | INSTRUKSI KRITIS: Ikuti urutan onboarding INI PERSIS: (1) tanya kesiapan, (2) kalau siap TANYA NAMA DULU, (3) baru tanya kode kelas 6 digit, (4) konfirmasi kode, (5) tunggu konfirmasi siswa. JANGAN minta kode kelas sebelum tahu nama siswa. JANGAN tanya nama dua kali."
@@ -378,24 +373,19 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		out.Fase = "belajar"
 
 		niat, topik := deteksiNiatUser(pesanSiswa)
-		_ = storedKelasID
-
 		nama := storedNama
 		if nama == "" {
 			nama = "Siswa"
 		}
 
-		// STATE MACHINE: Alur Pembelajaran Interaktif
 		if stateBelajar != nil {
-			// Ada state belajar aktif, handle sesuai fase
 			switch stateBelajar.Fase {
+
 			case "pilih_materi":
-				// User sedang memilih materi dari list
 				materiList, _ := s.siswaService.GetDaftarMateri(storedKelasID)
 				materiID, materiJudul := deteksiPilihanMateri(pesanSiswa, materiList)
-				
+
 				if materiID > 0 {
-					// User memilih materi, ambil konten lengkap
 					materi, modulNama, _ := s.siswaService.GetMateriByID(materiID)
 					if materi != nil {
 						s.mu.Lock()
@@ -408,103 +398,122 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 							ProgressBaca: 0,
 						}
 						s.mu.Unlock()
-						
-						out.Balasan = fmt.Sprintf("Oke %s, kamu memilih materi '%s' dari modul %s. Apakah kamu siap mendengarkan materinya?", 
+
+						out.Balasan = fmt.Sprintf("Oke %s, kamu memilih materi '%s' dari modul %s. Apakah kamu siap mendengarkan materinya?",
 							nama, materiJudul, modulNama)
 						log.Printf("[tutor] state: pilih_materi -> konfirmasi_materi (materi_id=%d)", materiID)
 					}
 				} else {
-					out.Balasan = fmt.Sprintf("Maaf %s, aku tidak mengerti pilihanmu. Bisa sebutkan nomor atau judul materi yang kamu pilih?", nama)
+					batas := len(materiList)
+					if batas > 5 {
+						batas = 5
+					}
+					out.Balasan = fmt.Sprintf("Maaf %s, aku tidak mengerti pilihanmu. Sebutkan nomor 1 sampai %d atau judul materinya ya.", nama, batas)
 				}
 
 			case "konfirmasi_materi":
-				// User konfirmasi siap mendengarkan
 				if isKonfirmasi {
 					s.mu.Lock()
 					s.sessionBelajar[sessionID].Fase = "baca_setengah"
 					s.sessionBelajar[sessionID].ProgressBaca = 50
 					s.mu.Unlock()
-					
-					// Baca setengah materi
+
 					konten := stateBelajar.MateriKonten
 					setengahKonten := konten[:len(konten)/2]
-					
-					out.Balasan = fmt.Sprintf("Baik, aku akan bacakan materi '%s'. Ini bagian pertama:\n\n%s\n\nOke, sudah setengah jalan. Apakah kamu paham dengan materi yang aku bacakan?", 
+
+					out.Balasan = fmt.Sprintf("Baik, aku akan bacakan materi '%s'. Ini bagian pertama:\n\n%s\n\nOke, sudah setengah jalan. Apakah kamu paham dengan materi yang aku bacakan?",
 						stateBelajar.MateriJudul, setengahKonten)
 					log.Printf("[tutor] state: konfirmasi_materi -> baca_setengah (progress=50%%)")
 				} else {
-					out.Balasan = fmt.Sprintf("Oke %s, kalau belum siap, bilang saja kalau kamu sudah siap ya.", nama)
+					out.Balasan = fmt.Sprintf("Oke %s, kalau belum siap, bilang saja 'ya siap' kalau kamu sudah siap ya.", nama)
 				}
 
 			case "baca_setengah":
-				// User jawab apakah paham atau tidak
-				if strings.Contains(pesanLower, "paham") || strings.Contains(pesanLower, "mengerti") {
-					if negasiRe.MatchString(pesanLower) {
-						// User tidak paham -> ulang
-						s.mu.Lock()
-						s.sessionBelajar[sessionID].Fase = "konfirmasi_materi"
-						s.sessionBelajar[sessionID].ProgressBaca = 0
-						s.mu.Unlock()
-						
-						out.Balasan = fmt.Sprintf("Oke %s, tidak apa-apa. Aku akan ulang dari awal ya. Apakah kamu siap mendengarkan lagi?", nama)
-						log.Printf("[tutor] state: baca_setengah -> konfirmasi_materi (ulang)")
-					} else {
-						// User paham -> lanjut ke sisa materi
-						s.mu.Lock()
-						s.sessionBelajar[sessionID].Fase = "lanjut_atau_ulang"
-						s.sessionBelajar[sessionID].ProgressBaca = 100
-						s.mu.Unlock()
-						
-						konten := stateBelajar.MateriKonten
-						sisaKonten := konten[len(konten)/2:]
-						
-						out.Balasan = fmt.Sprintf("Bagus! Sekarang aku lanjutkan bagian kedua:\n\n%s\n\nNah, sekarang materinya sudah selesai. Ada yang ingin kamu tanyakan atau kita lanjut ke materi lain?", 
-							sisaKonten)
-						log.Printf("[tutor] state: baca_setengah -> lanjut_atau_ulang (progress=100%%)")
-					}
+				pahamPositif := strings.Contains(pesanLower, "paham") ||
+					strings.Contains(pesanLower, "mengerti") ||
+					strings.Contains(pesanLower, "ngerti")
+				mintaUlang := strings.Contains(pesanLower, "ulang") ||
+					strings.Contains(pesanLower, "belum") ||
+					strings.Contains(pesanLower, "tidak") ||
+					strings.Contains(pesanLower, "kurang") ||
+					strings.Contains(pesanLower, "gak") ||
+					strings.Contains(pesanLower, "ga ")
+
+				if mintaUlang {
+					s.mu.Lock()
+					s.sessionBelajar[sessionID].Fase = "konfirmasi_materi"
+					s.sessionBelajar[sessionID].ProgressBaca = 0
+					s.mu.Unlock()
+
+					out.Balasan = fmt.Sprintf("Oke %s, tidak apa-apa. Aku akan ulang dari awal ya. Apakah kamu siap mendengarkan lagi?", nama)
+					log.Printf("[tutor] state: baca_setengah -> konfirmasi_materi (ulang)")
+				} else if pahamPositif || isKonfirmasi {
+					s.mu.Lock()
+					s.sessionBelajar[sessionID].Fase = "lanjut_atau_ulang"
+					s.sessionBelajar[sessionID].ProgressBaca = 100
+					s.mu.Unlock()
+
+					konten := stateBelajar.MateriKonten
+					sisaKonten := konten[len(konten)/2:]
+
+					out.Balasan = fmt.Sprintf("Bagus! Sekarang aku lanjutkan bagian kedua:\n\n%s\n\nNah, sekarang materinya sudah selesai. Ada yang ingin kamu tanyakan atau kita lanjut ke materi lain?",
+						sisaKonten)
+					log.Printf("[tutor] state: baca_setengah -> lanjut_atau_ulang (progress=100%%)")
 				} else {
-					out.Balasan = fmt.Sprintf("Maaf %s, aku tidak mengerti. Apakah kamu paham dengan materi yang aku bacakan? Jawab 'ya paham' atau 'belum paham'.", nama)
+					out.Balasan = fmt.Sprintf("Maaf %s, aku tidak mengerti. Apakah kamu paham dengan materi yang aku bacakan? Jawab 'paham' untuk lanjut, atau 'ulang' kalau mau aku bacakan lagi.", nama)
 				}
 
 			case "lanjut_atau_ulang":
-				// Materi selesai, user bisa pilih materi lain atau tanya sesuatu
-				// Reset state
+				judulSelesai := stateBelajar.MateriJudul
 				s.mu.Lock()
 				delete(s.sessionBelajar, sessionID)
 				s.mu.Unlock()
-				
-				// Biarkan AI handle natural conversation
+
+				// FIX: selalu set balasan penutup, jangan biarkan balasan AI nyasar lolos
 				if niat == "materi" {
-					out.Balasan = fmt.Sprintf("Oke %s, mau belajar materi apa lagi? Di kelas %s ini ada %d materi yang bisa kamu pelajari.", 
-						nama, storedKelas, storedKonten.JumlahMateri)
+					out.Balasan = fmt.Sprintf("Semangat belajar, %s! Sebutkan saja 'aku mau materi', nanti aku tampilkan lagi daftar materi yang bisa kamu pilih.", nama)
+				} else {
+					out.Balasan = fmt.Sprintf("Materi '%s' sudah selesai kita pelajari, %s. Selanjutnya kamu mau belajar apa? Kalau mau materi lain, bilang saja 'aku mau materi'.", judulSelesai, nama)
 				}
 				log.Printf("[tutor] state: lanjut_atau_ulang -> reset (materi selesai)")
 
 			default:
-				// State tidak dikenal, reset
 				s.mu.Lock()
 				delete(s.sessionBelajar, sessionID)
 				s.mu.Unlock()
 			}
+
+			// SAFETY NET: kalau setelah state machine balasan masih mengandung kata onboarding, ganti
+			if cekKataOnboarding(strings.ToLower(out.Balasan)) {
+				out.Balasan = fmt.Sprintf("Kamu sudah masuk kelas %s, %s. Tidak perlu kode atau nama lagi. Hari ini kamu mau belajar apa? Di kelas ini ada %d materi dan %d soal yang bisa kamu pelajari.",
+					storedKelas, nama, storedKonten.JumlahMateri, storedKonten.JumlahSoal)
+				log.Printf("[tutor] safety net: balasan masih mengandung kata onboarding, diganti (session %s)", sessionID)
+			}
 		} else if niat == "materi" && storedKonten.JumlahMateri > 0 {
-			// User minta materi tapi belum ada state -> tampilkan list materi
 			materiList, _ := s.siswaService.GetDaftarMateri(storedKelasID)
-			
+
 			if len(materiList) > 0 {
+				// FIX: batasi list maksimal 5 biar TTS tidak kepanjangan
+				batas := len(materiList)
+				if batas > 5 {
+					batas = 5
+				}
 				listMateri := ""
-				for i, materi := range materiList {
-					listMateri += fmt.Sprintf("%d. %s (%s)\n", i+1, materi["judul"], materi["modul"])
+				for i := 0; i < batas; i++ {
+					listMateri += fmt.Sprintf("%d. %s (%s)\n", i+1, materiList[i]["judul"], materiList[i]["modul"])
 				}
-				
+				extra := ""
+				if len(materiList) > 5 {
+					extra = fmt.Sprintf("...dan %d materi lainnya. ", len(materiList)-5)
+				}
+
 				s.mu.Lock()
-				s.sessionBelajar[sessionID] = &StateBelajar{
-					Fase: "pilih_materi",
-				}
+				s.sessionBelajar[sessionID] = &StateBelajar{Fase: "pilih_materi"}
 				s.mu.Unlock()
-				
-				out.Balasan = fmt.Sprintf("Ini beberapa materi yang tersedia di kelas %s:\n\n%s\nKamu mau pilih yang mana? Sebutkan nomor atau judul materinya ya.", 
-					storedKelas, listMateri)
-				log.Printf("[tutor] state: new -> pilih_materi (tampilkan %d materi)", len(materiList))
+
+				out.Balasan = fmt.Sprintf("Ini beberapa materi yang tersedia di kelas %s:\n\n%s%sKamu mau pilih yang mana? Sebutkan nomor 1 sampai %d atau judul materinya ya.",
+					storedKelas, listMateri, extra, batas)
+				log.Printf("[tutor] state: new -> pilih_materi (tampilkan %d dari %d materi)", batas, len(materiList))
 			} else {
 				out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada materi bacaan, %s. Yang tersedia baru %d soal latihan. Mau kita mulai ngerjain soal dulu?",
 					storedKelas, nama, storedKonten.JumlahSoal)
@@ -513,7 +522,6 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			out.Balasan = fmt.Sprintf("Hmm, di kelas %s ini belum ada soal latihan, %s. Yang tersedia baru %d materi bacaan. Mau kita mulai baca materi dulu?",
 				storedKelas, nama, storedKonten.JumlahMateri)
 		} else if cekKataOnboarding(balasanLower) {
-			// Override agresif untuk kata onboarding
 			if len(topik) > 2 {
 				out.Balasan = fmt.Sprintf("Oke %s! Ayo kita bahas %s. Apa yang ingin kamu ketahui dulu tentang itu?", nama, topik)
 			} else {
@@ -580,9 +588,9 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 	}
 
 	namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
-	
+
 	konten := s.siswaService.HitungKontenKelas(siswa.KelasID)
-	
+
 	s.mu.Lock()
 	s.sessionJoined[sessionID] = true
 	s.sessionKelasNama[sessionID] = namaKelas
@@ -600,7 +608,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		Token:     token,
 	}
 	out.Fase = "belajar"
-	
+
 	switch {
 	case konten.JumlahMateri > 0 && konten.JumlahSoal > 0:
 		out.Balasan = fmt.Sprintf("Sempurna! Kamu sekarang resmi masuk kelas %s. Di kelas ini ada %d materi dan %d soal latihan yang bisa kamu pelajari. Hari ini kamu mau belajar apa, %s?",
@@ -615,7 +623,7 @@ func (s *TutorService) handleAutoJoin(sessionID string, out *ChatResult) {
 		out.Balasan = fmt.Sprintf("Sempurna! Kamu sekarang resmi masuk kelas %s. Tapi sepertinya kelas ini masih kosong — belum ada materi atau soal. Coba hubungi guru kamu dulu ya, %s.",
 			namaKelas, siswa.Nama)
 	}
-	
+
 	log.Printf("[tutor] auto-join SUKSES: siswa %d (%s) kelas %d (%s) — konten: %d materi, %d soal",
 		siswa.ID, siswa.Nama, siswa.KelasID, namaKelas, konten.JumlahMateri, konten.JumlahSoal)
 }
