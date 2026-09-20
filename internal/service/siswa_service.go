@@ -171,12 +171,12 @@ func (s *SiswaService) NamaKelasByID(kelasID uint) (string, error) {
 	}
 	return kelas.NamaKelas, nil
 }
+
 // KontenKelas berisi jumlah materi & soal yang tersedia di suatu kelas.
 type KontenKelas struct {
 	JumlahMateri int `json:"jumlah_materi"`
 	JumlahSoal   int `json:"jumlah_soal"`
 }
-
 
 // HitungKontenKelas menghitung jumlah materi & soal di kelas via repository.
 func (s *SiswaService) HitungKontenKelas(kelasID uint) KontenKelas {
@@ -184,4 +184,44 @@ func (s *SiswaService) HitungKontenKelas(kelasID uint) KontenKelas {
 		JumlahMateri: int(s.kelasRepo.HitungMateriKelas(kelasID)),
 		JumlahSoal:   int(s.kelasRepo.HitungSoalKelas(kelasID)),
 	}
+}
+
+// GetDaftarMateri mengambil list materi di kelas siswa untuk ditampilkan ke user
+func (s *SiswaService) GetDaftarMateri(kelasID uint) ([]map[string]interface{}, error) {
+	kelas, err := s.kelasRepo.FindByID(kelasID)
+	if err != nil || kelas == nil {
+		return nil, fmt.Errorf("kelas tidak ditemukan")
+	}
+
+	materiList := make([]map[string]interface{}, 0)
+
+	for _, modul := range kelas.Modul {
+		materis, _ := s.materiRepo.FindByModulID(modul.ID)
+		for _, materi := range materis {
+			materiList = append(materiList, map[string]interface{}{
+				"id":       materi.ID,
+				"judul":    materi.Judul,
+				"modul":    modul.Nama,
+				"konten":   materi.Konten,
+				"modul_id": modul.ID,
+			})
+		}
+	}
+
+	return materiList, nil
+}
+
+// GetMateriByID mengambil materi spesifik berdasarkan ID + nama modulnya
+func (s *SiswaService) GetMateriByID(materiID uint) (*model.Materi, string, error) {
+	materi, err := s.materiRepo.FindByID(materiID)
+	if err != nil || materi == nil {
+		return nil, "", fmt.Errorf("materi tidak ditemukan")
+	}
+
+	modul, err := s.materiRepo.GetModulByMateriID(materiID)
+	if err != nil || modul == nil {
+		return materi, "", nil
+	}
+
+	return materi, modul.Nama, nil
 }
