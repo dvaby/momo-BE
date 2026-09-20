@@ -21,7 +21,7 @@ func main() {
 	cfg := config.LoadConfig()
 	db := database.Connect(cfg)
 
-	aiClient := aiclient.NewClient(cfg.AIServiceURL)
+	aiClient := aiclient.NewClient(cfg.AIServiceURL, cfg.AIServiceAuthToken)
 	sseHub := handler.NewSSEHub()
 
 	// Job registry untuk arsitektur v1.4+

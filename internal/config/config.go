@@ -23,9 +23,9 @@ type Config struct {
 	AppBaseURL          string
 	FEVerifyRedirectURL string
 	JWTSecret           string
-	// BARU untuk arsitektur v1.4+ (Fase 1): token internal AI + URL callback
 	AIInternalToken   string
 	AICallbackBaseURL string
+	 AIServiceAuthToken  string
 }
 
 func LoadConfig() *Config {
@@ -80,6 +80,7 @@ func LoadConfig() *Config {
 		JWTSecret:           os.Getenv("JWT_SECRET"),
 		AIInternalToken:     aiInternalToken,
 		AICallbackBaseURL:   aiCallbackBaseURL,
+		AIServiceAuthToken: os.Getenv("AI_SERVICE_AUTH_TOKEN"),
 	}
 }
 
