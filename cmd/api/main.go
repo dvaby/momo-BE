@@ -83,27 +83,32 @@ nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
 nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
 // BARU: Tutor service untuk Mode Tutor Fase 2
-tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, siswaService)
+toolsExecURL := cfg.ToolsExecURLWithSecret()
+log.Printf("[startup] tools exec URL: %s...%s", toolsExecURL[:40], toolsExecURL[len(toolsExecURL)-10:])
+tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, toolsExecURL, siswaService)
+toolsHandler := handler.NewToolsHandler(tutorService, cfg.AIInternalToken)
 tutorHandler := handler.NewTutorHandler(tutorService)
 
 // Handler callback AI (tambah unifiedHub untuk emit tutor-reply)
 aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken, unifiedHub)
 
 	r := router.SetupRouter(
-	cfg,
-	modulHandler,
-	uploadHandler,
-	materiHandler,
-	soalHandler,
-	kelasHandler,
-	siswaHandler,
-	jawabanSiswaHandler,
-	nilaiHandler,
-	guruHandler,
-	aiCallbackHandler,
-	streamHandler,
-	tutorHandler,
-	middleware.NewAuthMiddleware(siswaRepo),
+    cfg,
+    modulHandler,
+    uploadHandler,
+    materiHandler,
+    soalHandler,
+    kelasHandler,
+    siswaHandler,
+    jawabanSiswaHandler,
+    nilaiHandler,
+    guruHandler,
+    aiCallbackHandler,
+    streamHandler,
+    tutorHandler,
+    middleware.NewAuthMiddleware(siswaRepo),
 )
-	r.Run(":" + cfg.ServerPort)
+// TAMBAHKAN BARIS INI:
+r.POST("/api/v1/internal/tools/execute", toolsHandler.Execute)
+r.Run(":" + cfg.ServerPort)
 }

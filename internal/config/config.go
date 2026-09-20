@@ -93,3 +93,8 @@ func (c *Config) CallbackURLWithSecret() string {
 	// Gunakan AIInternalToken sebagai secret di query param
 	return c.AICallbackBaseURL + "/api/v1/internal/ai-callback?token=" + c.AIInternalToken
 }
+
+// ToolsExecURLWithSecret generates the full tools execute URL with token
+func (c *Config) ToolsExecURLWithSecret() string {
+	return c.AICallbackBaseURL + "/api/v1/internal/tools/execute?token=" + c.AIInternalToken
+}

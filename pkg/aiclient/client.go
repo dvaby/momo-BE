@@ -254,3 +254,25 @@ func (c *Client) SubmitTutor(jobID, callbackURL, pesanSiswa, konteks, sessionID 
 
 	return nil
 }
+// SubmitTutorV2 mengirim payload function-calling ke AI Service.
+// Sesuaikan nama field baseURL/httpClient dengan struct Client kamu.
+func (c *Client) SubmitTutorV2(payload map[string]interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload tutor v2: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/tutor", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("buat request tutor v2: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("kirim request tutor v2: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("AI Service menolak request tutor v2: status %d", resp.StatusCode)
+	}
+	return nil
+}
