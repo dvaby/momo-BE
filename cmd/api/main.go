@@ -8,13 +8,13 @@ import (
 	"momo-be/internal/database"
 	"momo-be/internal/handler"
 	"momo-be/internal/job"
+	"momo-be/internal/middleware"
 	"momo-be/internal/repository"
 	"momo-be/internal/router"
 	"momo-be/internal/service"
 	"momo-be/internal/sse"
 	"momo-be/pkg/aiclient"
 	"momo-be/pkg/emailsender"
-	"momo-be/internal/middleware"
 )
 
 func main() {
@@ -79,36 +79,41 @@ func main() {
 	jawabanSiswaHandler := handler.NewJawabanSiswaHandler(jawabanSiswaService, unifiedHub)
 
 	nilaiRepo := repository.NewNilaiRepository(db)
-nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
-nilaiHandler := handler.NewNilaiHandler(nilaiService)
+	nilaiService := service.NewNilaiService(nilaiRepo, kelasRepo, modulRepo)
+	nilaiHandler := handler.NewNilaiHandler(nilaiService)
 
-// BARU: Tutor service untuk Mode Tutor Fase 2
-toolsExecURL := cfg.ToolsExecURLWithSecret()
-log.Printf("[startup] tools exec URL: %s...%s", toolsExecURL[:40], toolsExecURL[len(toolsExecURL)-10:])
-tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, toolsExecURL, siswaService)
-toolsHandler := handler.NewToolsHandler(tutorService, cfg.AIInternalToken)
-tutorHandler := handler.NewTutorHandler(tutorService)
+	// ===== Tutor + Kuis service (Mode Tutor Fase 2 + Kuis Suara) =====
+	toolsExecURL := cfg.ToolsExecURLWithSecret()
+	log.Printf("[startup] tools exec URL: %s...%s", toolsExecURL[:40], toolsExecURL[len(toolsExecURL)-10:])
 
-// Handler callback AI (tambah unifiedHub untuk emit tutor-reply)
-aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken, unifiedHub)
+	kuisService := service.NewKuisService(db)
+	tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, toolsExecURL, siswaService, kuisService)
+
+	toolsHandler := handler.NewToolsHandler(tutorService, cfg.AIInternalToken)
+	tutorHandler := handler.NewTutorHandler(tutorService)
+
+	// Handler callback AI (tambah unifiedHub untuk emit tutor-reply)
+	aiCallbackHandler := handler.NewAICallbackHandler(jobRegistry, cfg.AIInternalToken, unifiedHub)
 
 	r := router.SetupRouter(
-    cfg,
-    modulHandler,
-    uploadHandler,
-    materiHandler,
-    soalHandler,
-    kelasHandler,
-    siswaHandler,
-    jawabanSiswaHandler,
-    nilaiHandler,
-    guruHandler,
-    aiCallbackHandler,
-    streamHandler,
-    tutorHandler,
-    middleware.NewAuthMiddleware(siswaRepo),
-)
-// TAMBAHKAN BARIS INI:
-r.POST("/api/v1/internal/tools/execute", toolsHandler.Execute)
-r.Run(":" + cfg.ServerPort)
+		cfg,
+		modulHandler,
+		uploadHandler,
+		materiHandler,
+		soalHandler,
+		kelasHandler,
+		siswaHandler,
+		jawabanSiswaHandler,
+		nilaiHandler,
+		guruHandler,
+		aiCallbackHandler,
+		streamHandler,
+		tutorHandler,
+		middleware.NewAuthMiddleware(siswaRepo),
+	)
+
+	// Endpoint internal untuk AI Service memanggil tools backend (tanpa auth middleware, token di query param)
+	r.POST("/api/v1/internal/tools/execute", toolsHandler.Execute)
+
+	r.Run(":" + cfg.ServerPort)
 }

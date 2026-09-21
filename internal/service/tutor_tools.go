@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"log"
+	"fmt"
 	"strings"
 )
 
@@ -59,6 +60,10 @@ func GetToolDefinitions() []ToolDefinition {
 		{Name: "baca_bagian_kedua", Description: "Ambil paruh kedua konten materi terpilih (user sudah paham bagian pertama).", Parameters: empty},
 		{Name: "ulang_baca", Description: "Ambil ulang paruh pertama konten (user belum paham).", Parameters: empty},
 		{Name: "reset_percakapan", Description: "Hapus seluruh state session (mulai dari awal).", Parameters: empty},
+				{Name: "list_soal", Description: "Ambil daftar jenis soal yang tersedia di kelas siswa beserta jumlahnya (harian/uts/uas).", Parameters: empty},
+		{Name: "mulai_kuis", Description: "Mulai kuis suara dengan jenis tertentu. Kembalikan soal pertama lengkap dengan pilihan ganda.", Parameters: schema(map[string]interface{}{"jenis": propStr("jenis soal: harian, uts, atau uas")}, "jenis")},
+		{Name: "ulang_soal", Description: "Bacakan ulang soal kuis yang sedang aktif.", Parameters: empty},
+		{Name: "submit_jawaban", Description: "Nilai jawaban suara siswa untuk soal kuis aktif, simpan ke database, lalu lanjut ke soal berikutnya atau akhiri kuis dengan skor.", Parameters: schema(map[string]interface{}{"jawaban": propStr("jawaban siswa berupa huruf pilihan atau teks pilihan")}, "jawaban")},
 	}
 }
 
@@ -156,6 +161,7 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		s.sessionNama[sessionID] = siswa.Nama
 		s.sessionKelasID[sessionID] = siswa.KelasID
 		s.sessionKonten[sessionID] = konten
+				s.sessionSiswaID[sessionID] = siswa.ID
 		delete(s.sessionFailedCode, sessionID)
 		// token disimpan di backend saja, dikirim ke FE lewat response /chat
 		s.sessionPendingJoin[sessionID] = &JoinInfo{
@@ -293,6 +299,118 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		delete(s.sessionPendingJoin, sessionID)
 		s.mu.Unlock()
 		return okResult(call, map[string]string{"status": "session direset"})
+
+		case "list_soal":
+		s.mu.Lock()
+		kelasID := s.sessionKelasID[sessionID]
+		joined := s.sessionJoined[sessionID]
+		s.mu.Unlock()
+		if !joined {
+			return errResult(call, "siswa belum join kelas")
+		}
+		info := s.kuisService.InfoSoalKelas(kelasID)
+		return okResult(call, map[string]interface{}{"tersedia": len(info) > 0, "info": info})
+
+	case "mulai_kuis":
+		var args struct {
+			Jenis string `json:"jenis"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return errResult(call, "arguments tidak valid")
+		}
+		s.mu.Lock()
+		kelasID := s.sessionKelasID[sessionID]
+		joined := s.sessionJoined[sessionID]
+		s.mu.Unlock()
+		if !joined {
+			return errResult(call, "siswa belum join kelas")
+		}
+		jenis := strings.ToLower(strings.TrimSpace(args.Jenis))
+		soals, err := s.kuisService.AmbilSoalKelas(kelasID, jenis, 5)
+		if err != nil || len(soals) == 0 {
+			return errResult(call, "tidak ada soal jenis "+jenis+" di kelas ini")
+		}
+		ids := make([]uint, 0, len(soals))
+		for _, so := range soals {
+			ids = append(ids, so.ID)
+		}
+		s.mu.Lock()
+		s.sessionKuis[sessionID] = &StateKuis{Jenis: jenis, SoalIDs: ids, Index: 0, Skor: 0, Total: len(ids)}
+		s.mu.Unlock()
+		first := soals[0]
+		return okResult(call, map[string]interface{}{"jenis": jenis, "total": len(ids), "soal": FormatSoal(1, len(ids), &first)})
+
+	case "ulang_soal":
+		s.mu.Lock()
+		kuis := s.sessionKuis[sessionID]
+		s.mu.Unlock()
+		if kuis == nil || kuis.Index >= len(kuis.SoalIDs) {
+			return errResult(call, "tidak ada kuis aktif")
+		}
+		soal, err := s.kuisService.SoalByID(kuis.SoalIDs[kuis.Index])
+		if err != nil {
+			return errResult(call, "soal tidak ditemukan")
+		}
+		return okResult(call, map[string]interface{}{"soal": FormatSoal(kuis.Index+1, kuis.Total, soal)})
+
+	case "submit_jawaban":
+		var args struct {
+			Jawaban string `json:"jawaban"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return errResult(call, "arguments tidak valid")
+		}
+		s.mu.Lock()
+		kuis := s.sessionKuis[sessionID]
+		siswaID := s.sessionSiswaID[sessionID]
+		s.mu.Unlock()
+		if kuis == nil || kuis.Index >= len(kuis.SoalIDs) {
+			return errResult(call, "tidak ada kuis aktif")
+		}
+		soal, err := s.kuisService.SoalByID(kuis.SoalIDs[kuis.Index])
+		if err != nil {
+			return errResult(call, "soal tidak ditemukan")
+		}
+		huruf := DeteksiHuruf(args.Jawaban, soal)
+		if huruf == "" {
+			return okResult(call, map[string]interface{}{
+				"terdeteksi": false,
+				"pesan":      "jawaban tidak terbaca sebagai pilihan a sampai d; tanyakan ulang ke siswa",
+			})
+		}
+		benar := huruf == strings.ToUpper(strings.TrimSpace(soal.KunciJawaban))
+		feedback := "Kurang tepat. Jawaban yang benar adalah " + strings.ToUpper(soal.KunciJawaban) + "."
+		if benar {
+			feedback = "Benar! Kerja bagus."
+			s.mu.Lock()
+			kuis.Skor++
+			s.mu.Unlock()
+		}
+		if siswaID > 0 {
+			_ = s.kuisService.SimpanJawaban(siswaID, soal.ID, args.Jawaban, huruf, benar, feedback)
+		}
+		s.mu.Lock()
+		kuis.Index++
+		index := kuis.Index
+		skor := kuis.Skor
+		s.mu.Unlock()
+
+		res := map[string]interface{}{"terdeteksi": true, "huruf": huruf, "benar": benar, "feedback": feedback, "skor": skor}
+		if index >= len(kuis.SoalIDs) {
+			res["selesai"] = true
+			res["skor_akhir"] = fmt.Sprintf("%d dari %d", skor, kuis.Total)
+			s.mu.Lock()
+			delete(s.sessionKuis, sessionID)
+			s.mu.Unlock()
+		} else {
+			next, errNext := s.kuisService.SoalByID(kuis.SoalIDs[index])
+			if errNext != nil {
+				return errResult(call, "soal berikutnya tidak ditemukan")
+			}
+			res["selesai"] = false
+			res["soal_berikutnya"] = FormatSoal(index+1, kuis.Total, next)
+		}
+		return okResult(call, res)
 
 	default:
 		return errResult(call, "tool tidak dikenal: "+call.Name)

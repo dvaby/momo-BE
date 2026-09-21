@@ -14,6 +14,8 @@ import (
 	"momo-be/pkg/aiclient"
 )
 
+// ========== Tipe data ==========
+
 type JoinInfo struct {
 	SiswaID   uint   `json:"siswa_id"`
 	KelasID   uint   `json:"kelas_id"`
@@ -32,6 +34,7 @@ type ChatResult struct {
 	JoinError   string    `json:"join_error,omitempty"`
 }
 
+// StateBelajar melacak progres pembacaan materi
 type StateBelajar struct {
 	Fase         string `json:"fase"`
 	MateriID     uint   `json:"materi_id"`
@@ -41,53 +44,9 @@ type StateBelajar struct {
 	ProgressBaca int    `json:"progress_baca"`
 }
 
-type TutorService struct {
-	aiClient     *aiclient.Client
-	jobRegistry  *job.Registry
-	callbackURL  string
-	toolsExecURL string
-	siswaService *SiswaService
+// ========== Helper package (pastikan hanya ADA DI FILE INI) ==========
 
-	mu                sync.Mutex
-	sessionLastCode   map[string]string
-	sessionFailedCode map[string]string
-	sessionJoined     map[string]bool
-	sessionKelasNama  map[string]string
-	sessionNama       map[string]string
-	sessionKelasID    map[string]uint
-	sessionKonten     map[string]KontenKelas
-	sessionBelajar    map[string]*StateBelajar
-	sessionPendingJoin map[string]*JoinInfo
-}
-
-var (
-	sixDigits = regexp.MustCompile(`\b\d{6}\b`)
-)
-
-func NewTutorService(
-	aiClient *aiclient.Client,
-	jobRegistry *job.Registry,
-	callbackURL string,
-	toolsExecURL string,
-	siswaService *SiswaService,
-) *TutorService {
-	return &TutorService{
-		aiClient:           aiClient,
-		jobRegistry:        jobRegistry,
-		callbackURL:        callbackURL,
-		toolsExecURL:       toolsExecURL,
-		siswaService:       siswaService,
-		sessionLastCode:    make(map[string]string),
-		sessionFailedCode:  make(map[string]string),
-		sessionJoined:      make(map[string]bool),
-		sessionKelasNama:   make(map[string]string),
-		sessionNama:        make(map[string]string),
-		sessionKelasID:     make(map[string]uint),
-		sessionKonten:      make(map[string]KontenKelas),
-		sessionBelajar:     make(map[string]*StateBelajar),
-		sessionPendingJoin: make(map[string]*JoinInfo),
-	}
-}
+var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
 
 func pilihAcak(opts []string) string {
 	if len(opts) == 0 {
@@ -143,6 +102,61 @@ func extractKodeKelas(pesan string, prevCode string) string {
 	return ""
 }
 
+// ========== Service ==========
+
+type TutorService struct {
+	aiClient     *aiclient.Client
+	jobRegistry  *job.Registry
+	callbackURL  string
+	toolsExecURL string
+	siswaService *SiswaService
+	kuisService  *KuisService
+
+	mu                 sync.Mutex
+	sessionLastCode    map[string]string
+	sessionFailedCode  map[string]string
+	sessionJoined      map[string]bool
+	sessionKelasNama   map[string]string
+	sessionNama        map[string]string
+	sessionKelasID     map[string]uint
+	sessionKonten      map[string]KontenKelas
+	sessionBelajar     map[string]*StateBelajar
+	sessionKuis        map[string]*StateKuis
+	sessionSiswaID     map[string]uint
+	sessionBusy        map[string]bool
+	sessionPendingJoin map[string]*JoinInfo
+}
+
+func NewTutorService(
+	aiClient *aiclient.Client,
+	jobRegistry *job.Registry,
+	callbackURL string,
+	toolsExecURL string,
+	siswaService *SiswaService,
+	kuisService *KuisService,
+) *TutorService {
+	return &TutorService{
+		aiClient:           aiClient,
+		jobRegistry:        jobRegistry,
+		callbackURL:        callbackURL,
+		toolsExecURL:       toolsExecURL,
+		siswaService:       siswaService,
+		kuisService:        kuisService,
+		sessionLastCode:    make(map[string]string),
+		sessionFailedCode:  make(map[string]string),
+		sessionJoined:      make(map[string]bool),
+		sessionKelasNama:   make(map[string]string),
+		sessionNama:        make(map[string]string),
+		sessionKelasID:     make(map[string]uint),
+		sessionKonten:      make(map[string]KontenKelas),
+		sessionBelajar:     make(map[string]*StateBelajar),
+		sessionKuis:        make(map[string]*StateKuis),
+		sessionSiswaID:     make(map[string]uint),
+		sessionBusy:        make(map[string]bool),
+		sessionPendingJoin: make(map[string]*JoinInfo),
+	}
+}
+
 func (s *TutorService) currentFase(sessionID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,11 +179,11 @@ func (s *TutorService) buildSessionState(sessionID string) map[string]interface{
 	}
 }
 
-// ProcessTutor v2: backend tipis. AI yang memutuskan alur via tool calls.
+// ProcessTutor mode v2: backend tipis, AI yang jadi otak percakapan via function calling
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
 
-	// Guard UX: mic kosong -> jawab cepat tanpa memanggil AI
+	// Guard 1: pesan kosong (mic tidak menangkap suara)
 	if strings.TrimSpace(pesanSiswa) == "" {
 		return &ChatResult{
 			JobID:   jobID,
@@ -177,6 +191,24 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 			Fase:    s.currentFase(sessionID),
 		}, nil
 	}
+
+	// Guard 2: anti double-send — satu session hanya boleh punya 1 job berjalan
+	s.mu.Lock()
+	if s.sessionBusy[sessionID] {
+		s.mu.Unlock()
+		return &ChatResult{
+			JobID:   jobID,
+			Balasan: "Tunggu sebentar ya, aku masih selesai bicara.",
+			Fase:    s.currentFase(sessionID),
+		}, nil
+	}
+	s.sessionBusy[sessionID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.sessionBusy, sessionID)
+		s.mu.Unlock()
+	}()
 
 	s.jobRegistry.Register(jobID, job.JobTypeTutor, 0, "", sessionID)
 
@@ -220,7 +252,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		Fase:    hasil.Fase,
 	}
 
-	// Lampirkan join yang terjadi giliran ini (hasil tool join_kelas)
+	// Lampirkan join yang terjadi di giliran ini (hasil tool join_kelas)
 	s.mu.Lock()
 	pending := s.sessionPendingJoin[sessionID]
 	delete(s.sessionPendingJoin, sessionID)
@@ -232,7 +264,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		log.Printf("[tutor] join dilampirkan ke response: siswa %d kelas %s", pending.SiswaID, pending.KelasNama)
 	}
 
-	// Safety net minimal (3 aturan, bukan percakapan):
+	// Safety net minimal
 	if out.Balasan == "" {
 		out.Balasan = pilihAcak([]string{"Maaf, aku tadi sempat blank. Bisa diulang lagi?", "Eh, ucapanku tadi belum keluar. Kamu bilang apa?"})
 	}
