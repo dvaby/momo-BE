@@ -251,9 +251,19 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	if finished == nil {
 		return nil, fmt.Errorf("timeout menunggu balasan tutor (90 detik)")
 	}
+	
 	if finished.Status == "failed" {
-		return nil, fmt.Errorf("AI tutor gagal memproses: %s", finished.Error)
-	}
+    errMsg := finished.Error
+    // Deteksi rate limit — kasih balasan ramah, bukan error 503
+    if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "RateLimit") {
+        return &ChatResult{
+            JobID:   jobID,
+            Balasan: "Maaf, aku lagi agak sibuk nih. Coba lagi dalam 10 detik ya? Aku pasti jawab!",
+            Fase:    s.currentFase(sessionID),
+        }, nil
+    }
+    return nil, fmt.Errorf("AI gagal: %s", errMsg)
+}
 
 	var hasil struct {
 		Balasan string `json:"balasan"`
