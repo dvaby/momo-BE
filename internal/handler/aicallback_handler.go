@@ -49,20 +49,31 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 	// 3. Parse body
 	var req job.CallbackRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		log.Printf("[ai-callback] RAW BODY (unparseable): %s", string(body))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "body bukan JSON valid"})
 		return
 	}
 
 	if req.JobID == "" {
+		log.Printf("[ai-callback] RAW BODY (tanpa job_id): %s", string(body))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "job_id wajib diisi"})
 		return
 	}
 
-	rawHasil := string(req.Hasil)
-	if len(rawHasil) > 300 {
-		rawHasil = rawHasil[:300] + "..."
+	// OBSERVABILITY (permintaan tim AI Service):
+	// - Job failed: log RAW BODY LENGKAP apa adanya + error_message eksplisit,
+	//   biar bisa cross-check dengan log Vercel mereka.
+	// - Job success: log ringkas seperti sebelumnya (hasil dipotong 300 karakter).
+	if req.Status == "failed" {
+		log.Printf("[ai-callback] RAW BODY (failed): %s", string(body))
+		log.Printf("[ai-callback] FAILED job=%s error_message=%q", req.JobID, req.ErrorMessage)
+	} else {
+		rawHasil := string(req.Hasil)
+		if len(rawHasil) > 300 {
+			rawHasil = rawHasil[:300] + "..."
+		}
+		log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s, hasil=%s", req.JobID, req.Tipe, req.Status, rawHasil)
 	}
-	log.Printf("[ai-callback] ACCEPTED: job=%s tipe=%s status=%s, hasil=%s", req.JobID, req.Tipe, req.Status, rawHasil)
 
 	// 4. Switch berdasarkan status
 	switch req.Status {
@@ -79,7 +90,12 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 		}
 
 	case "failed":
-		if err := h.registry.Fail(req.JobID, req.ErrorMessage); err != nil {
+		// Jangan biarkan error_message kosong mengalir ke user/log
+		errMsg := req.ErrorMessage
+		if errMsg == "" {
+			errMsg = "AI gagal tanpa keterangan (error_message kosong dari AI Service)"
+		}
+		if err := h.registry.Fail(req.JobID, errMsg); err != nil {
 			log.Printf("[ai-callback] warning: %v", err)
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -91,6 +107,7 @@ func (h *AICallbackHandler) Handle(c *gin.Context) {
 		}
 
 	default:
+		log.Printf("[ai-callback] RAW BODY (status invalid): %s", string(body))
 		c.JSON(http.StatusBadRequest, gin.H{"error": "status wajib 'success' atau 'failed'"})
 		return
 	}
@@ -133,7 +150,7 @@ func (h *AICallbackHandler) handleTutorSuccess(req job.CallbackRequest) {
 	}
 }
 
-// handleTutorFailed emit event tutor-reply dengan balasan error ramah
+// handleTutorFailed emit event tutor-reply denCallbackRequestgan balasan error ramah
 // supaya FE tetap bisa speak pesan yang sopan alih-alih stuck.
 func (h *AICallbackHandler) handleTutorFailed(req job.CallbackRequest) {
 	siswaID := h.extractSiswaID(req.JobID)
