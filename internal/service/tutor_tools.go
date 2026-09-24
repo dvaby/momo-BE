@@ -2,8 +2,8 @@ package service
 
 import (
 	"encoding/json"
-	"log"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -60,7 +60,7 @@ func GetToolDefinitions() []ToolDefinition {
 		{Name: "baca_bagian_kedua", Description: "Ambil paruh kedua konten materi terpilih (user sudah paham bagian pertama).", Parameters: empty},
 		{Name: "ulang_baca", Description: "Ambil ulang paruh pertama konten (user belum paham).", Parameters: empty},
 		{Name: "reset_percakapan", Description: "Hapus seluruh state session (mulai dari awal).", Parameters: empty},
-				{Name: "list_soal", Description: "Ambil daftar jenis soal yang tersedia di kelas siswa beserta jumlahnya (harian/uts/uas).", Parameters: empty},
+		{Name: "list_soal", Description: "Ambil daftar jenis soal yang tersedia di kelas siswa beserta jumlahnya (harian/uts/uas).", Parameters: empty},
 		{Name: "mulai_kuis", Description: "Mulai kuis suara dengan jenis tertentu. Kembalikan soal pertama lengkap dengan pilihan ganda.", Parameters: schema(map[string]interface{}{"jenis": propStr("jenis soal: harian, uts, atau uas")}, "jenis")},
 		{Name: "ulang_soal", Description: "Bacakan ulang soal kuis yang sedang aktif.", Parameters: empty},
 		{Name: "submit_jawaban", Description: "Nilai jawaban suara siswa untuk soal kuis aktif, simpan ke database, lalu lanjut ke soal berikutnya atau akhiri kuis dengan skor.", Parameters: schema(map[string]interface{}{"jawaban": propStr("jawaban siswa berupa huruf pilihan atau teks pilihan")}, "jawaban")},
@@ -161,7 +161,7 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		s.sessionNama[sessionID] = siswa.Nama
 		s.sessionKelasID[sessionID] = siswa.KelasID
 		s.sessionKonten[sessionID] = konten
-				s.sessionSiswaID[sessionID] = siswa.ID
+		s.sessionSiswaID[sessionID] = siswa.ID
 		delete(s.sessionFailedCode, sessionID)
 		// token disimpan di backend saja, dikirim ke FE lewat response /chat
 		s.sessionPendingJoin[sessionID] = &JoinInfo{
@@ -296,11 +296,12 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		delete(s.sessionKelasID, sessionID)
 		delete(s.sessionKonten, sessionID)
 		delete(s.sessionBelajar, sessionID)
+		delete(s.sessionKuis, sessionID)
 		delete(s.sessionPendingJoin, sessionID)
 		s.mu.Unlock()
 		return okResult(call, map[string]string{"status": "session direset"})
 
-		case "list_soal":
+	case "list_soal":
 		s.mu.Lock()
 		kelasID := s.sessionKelasID[sessionID]
 		joined := s.sessionJoined[sessionID]
@@ -334,10 +335,17 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		for _, so := range soals {
 			ids = append(ids, so.ID)
 		}
-		s.mu.Lock()
-		s.sessionKuis[sessionID] = &StateKuis{Jenis: jenis, SoalIDs: ids, Index: 0, Skor: 0, Total: len(ids)}
-		s.mu.Unlock()
 		first := soals[0]
+		s.mu.Lock()
+		s.sessionKuis[sessionID] = &StateKuis{
+			Jenis:     jenis,
+			SoalIDs:   ids,
+			Index:     0,
+			Skor:      0,
+			Total:     len(ids),
+			SoalAktif: NewSoalAktif(1, len(ids), &first),
+		}
+		s.mu.Unlock()
 		return okResult(call, map[string]interface{}{"jenis": jenis, "total": len(ids), "soal": FormatSoal(1, len(ids), &first)})
 
 	case "ulang_soal":
@@ -407,6 +415,9 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 			if errNext != nil {
 				return errResult(call, "soal berikutnya tidak ditemukan")
 			}
+			s.mu.Lock()
+			kuis.SoalAktif = NewSoalAktif(index+1, kuis.Total, next)
+			s.mu.Unlock()
 			res["selesai"] = false
 			res["soal_berikutnya"] = FormatSoal(index+1, kuis.Total, next)
 		}

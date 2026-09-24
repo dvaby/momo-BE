@@ -44,7 +44,7 @@ type StateBelajar struct {
 	ProgressBaca int    `json:"progress_baca"`
 }
 
-// ========== Helper package (pastikan hanya ADA DI FILE INI) ==========
+// ========== Helper package (hanya ADA DI FILE INI) ==========
 
 var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
 
@@ -166,10 +166,12 @@ func (s *TutorService) currentFase(sessionID string) string {
 	return "onboarding"
 }
 
+// buildSessionState menyusun snapshot state yang dikirim ke AI Service
 func (s *TutorService) buildSessionState(sessionID string) map[string]interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return map[string]interface{}{
+
+	state := map[string]interface{}{
 		"nama":          s.sessionNama[sessionID],
 		"kode_kelas":    s.sessionLastCode[sessionID],
 		"joined":        s.sessionJoined[sessionID],
@@ -177,6 +179,21 @@ func (s *TutorService) buildSessionState(sessionID string) map[string]interface{
 		"konten":        s.sessionKonten[sessionID],
 		"state_belajar": s.sessionBelajar[sessionID],
 	}
+
+	// Kirim state kuis ke AI Service biar LLM tahu sedang di tengah kuis
+	if kuis := s.sessionKuis[sessionID]; kuis != nil {
+		state["state_kuis"] = map[string]interface{}{
+			"jenis":      kuis.Jenis,
+			"index":      kuis.Index,
+			"total":      kuis.Total,
+			"skor":       kuis.Skor,
+			"soal_aktif": kuis.SoalAktif,
+		}
+		log.Printf("[tutor] state_kuis dikirim ke AI: jenis=%s index=%d total=%d skor=%d",
+			kuis.Jenis, kuis.Index, kuis.Total, kuis.Skor)
+	}
+
+	return state
 }
 
 // ProcessTutor mode v2: backend tipis, AI yang jadi otak percakapan via function calling

@@ -10,14 +10,44 @@ import (
 	"momo-be/internal/model"
 )
 
+// ========== Tipe state kuis ==========
+
 // StateKuis melacak progres kuis suara dalam satu session
 type StateKuis struct {
-	Jenis   string `json:"jenis"`
-	SoalIDs []uint `json:"soal_ids"`
-	Index   int    `json:"index"`
-	Skor    int    `json:"skor"`
-	Total   int    `json:"total"`
+	Jenis     string     `json:"jenis"`
+	SoalIDs   []uint     `json:"soal_ids"`
+	Index     int        `json:"index"`
+	Skor      int        `json:"skor"`
+	Total     int        `json:"total"`
+	SoalAktif *SoalAktif `json:"soal_aktif,omitempty"`
 }
+
+// SoalAktif adalah snapshot soal yang sedang ditampilkan ke user
+// (disimpan di state biar backend tidak perlu query DB ulang tiap giliran)
+type SoalAktif struct {
+	Nomor      int    `json:"nomor"`
+	Total      int    `json:"total"`
+	Pertanyaan string `json:"pertanyaan"`
+	PilihanA   string `json:"pilihan_a"`
+	PilihanB   string `json:"pilihan_b"`
+	PilihanC   string `json:"pilihan_c"`
+	PilihanD   string `json:"pilihan_d"`
+}
+
+// NewSoalAktif membuat snapshot soal dari model.Soal
+func NewSoalAktif(nomor, total int, s *model.Soal) *SoalAktif {
+	return &SoalAktif{
+		Nomor:      nomor,
+		Total:      total,
+		Pertanyaan: s.Pertanyaan,
+		PilihanA:   s.PilihanA,
+		PilihanB:   s.PilihanB,
+		PilihanC:   s.PilihanC,
+		PilihanD:   s.PilihanD,
+	}
+}
+
+// ========== Service ==========
 
 type KuisService struct {
 	db *gorm.DB
@@ -87,6 +117,8 @@ func (s *KuisService) SimpanJawaban(siswaID, soalID uint, mentah, terdeteksi str
 	}
 	return nil
 }
+
+// ========== Helper deteksi & format ==========
 
 var hurufDepanRe = regexp.MustCompile(`(?i)^(pilihan\s+|jawab\s+|huruf\s+|opsi\s+)?([a-d])\b`)
 
