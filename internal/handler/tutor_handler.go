@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -43,18 +42,24 @@ func (h *TutorHandler) SubmitTutor(c *gin.Context) {
 		kelasNama = "Siswa"
 	}
 
-	// Panggil service dengan 2 return value (res, err)
 	res, err := h.service.ProcessTutor(sessionID, kelasNama, req.Pesan)
 	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "timeout"):
-			c.JSON(http.StatusServiceUnavailable, appErrors.NewAIError(appErrors.CodeAITimeout, "Momo terlalu lama merespons. Silakan coba lagi."))
-		case strings.Contains(errMsg, "AI Service"), strings.Contains(errMsg, "AI tutor"):
-			c.JSON(http.StatusServiceUnavailable, appErrors.NewAIError(appErrors.CodeAIUnavailable, "AI tutor sedang tidak tersedia. Silakan coba lagi dalam beberapa saat."))
-		default:
-			c.JSON(http.StatusInternalServerError, appErrors.NewServerError(appErrors.CodeInternalError, errMsg))
-		}
+		// FIX UX: untuk aplikasi suara, lebih baik FE menerima 200 dengan balasan
+		// ramah yang bisa langsung di-TTS, daripada 503 yang bikin FE stuck/error toast.
+		c.JSON(http.StatusOK, gin.H{
+			"message":    "Balasan tutor diterima (fallback)",
+			"job_id":     job.GenerateID("fallback"),
+			"session_id": sessionID,
+			"balasan":    "Maaf, aku sedang agak sibuk sebentar. Coba ucapkan lagi ya, aku pasti dengarkan.",
+			"fase":       "belajar",
+			"is_fallback": true,
+			"extract": gin.H{
+				"nama":       "",
+				"kode_kelas": "",
+			},
+			"join":       nil,
+			"join_error": "",
+		})
 		return
 	}
 

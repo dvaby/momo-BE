@@ -2,6 +2,7 @@ package repository
 
 import (
 	"encoding/json"
+	"log"
 	"time"
 
 	"gorm.io/gorm"
@@ -22,10 +23,16 @@ func (r *ProgressRepository) Touch(siswaID uint) {
 	}
 	var p model.SiswaProgress
 	if err := r.db.Where("siswa_id = ?", siswaID).First(&p).Error; err != nil {
-		r.db.Create(&model.SiswaProgress{SiswaID: siswaID, MateriSelesai: "[]", LastActivity: time.Now()})
+		// Create new progress record
+		if createErr := r.db.Create(&model.SiswaProgress{SiswaID: siswaID, MateriSelesai: "[]", LastActivity: time.Now()}).Error; createErr != nil {
+			log.Printf("[progress] Touch create error for siswa %d: %v", siswaID, createErr)
+		}
 		return
 	}
-	r.db.Model(&p).Update("last_activity", time.Now())
+	// Update existing
+	if updateErr := r.db.Model(&p).Update("last_activity", time.Now()).Error; updateErr != nil {
+		log.Printf("[progress] Touch update error for siswa %d: %v", siswaID, updateErr)
+	}
 }
 
 // SelesaikanMateri menandai satu materi selesai untuk siswa
@@ -52,5 +59,7 @@ func (r *ProgressRepository) SelesaikanMateri(siswaID, materiID uint) {
 	b, _ := json.Marshal(ids)
 	p.MateriSelesai = string(b)
 	p.LastActivity = time.Now()
-	r.db.Save(&p)
+	if err := r.db.Save(&p).Error; err != nil {
+		log.Printf("[progress] SelesaikanMateri error for siswa %d materi %d: %v", siswaID, materiID, err)
+	}
 }

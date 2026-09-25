@@ -45,8 +45,8 @@ func GetToolDefinitions() []ToolDefinition {
 	empty := schema(map[string]interface{}{})
 	return []ToolDefinition{
 		{Name: "set_nama_siswa", Description: "Simpan nama siswa yang disebutkan user.", Parameters: schema(map[string]interface{}{"nama": propStr("Nama siswa")}, "nama")},
-		{Name: "set_kode_kelas", Description: "Simpan kode kelas yang disebutkan user. Backend menormalkan noise STT menjadi 6 digit.", Parameters: schema(map[string]interface{}{"kode": propStr("Kode kelas mentah dari ucapan user")}, "kode")},
-		{Name: "join_kelas", Description: "Validasi kode tersimpan dan daftarkan siswa ke kelas. Hasil sukses/gagal adalah satu-satunya sumber kebenaran status join.", Parameters: empty},
+		{Name: "set_kode_kelas", Description: "Simpan kode kelas yang disebutkan user. Backend menormalkan noise STT menjadi 6 digit DAN langsung mendaftarkan siswa (auto-join). JANGAN minta konfirmasi ulang kode setelah tool ini sukses.", Parameters: schema(map[string]interface{}{"kode": propStr("Kode kelas mentah dari ucapan user")}, "kode")},
+		{Name: "join_kelas", Description: "Validasi kode tersimpan dan daftarkan siswa ke kelas. Hasil sukses/gagal adalah satu-satunya sumber kebenaran status join. Biasanya tidak perlu dipanggil manual karena set_kode_kelas sudah auto-join.", Parameters: empty},
 		{Name: "get_kelas_info", Description: "Info kelas siswa: nama kelas, jumlah materi dan soal tersedia.", Parameters: empty},
 		{Name: "list_materi", Description: "Daftar maksimal 10 materi di kelas siswa: id, judul, nama modul.", Parameters: empty},
 		{Name: "get_materi", Description: "Ambil konten penuh satu materi untuk tanya-jawab.", Parameters: schema(map[string]interface{}{"materi_id": propInt("ID materi")}, "materi_id")},
@@ -78,6 +78,44 @@ func okResult(call ToolCall, result interface{}) ToolResult {
 
 func errResult(call ToolCall, msg string) ToolResult {
 	return ToolResult{ID: call.ID, Name: call.Name, OK: false, Error: msg}
+}
+
+// tryJoinKelas mencoba daftarkan siswa pakai kode tersimpan.
+// Mengubah state langsung kalau sukses. Return (ok, pesanError).
+func (s *TutorService) tryJoinKelas(state *SessionData, save func()) (bool, string) {
+	if state.Joined {
+		return true, ""
+	}
+	if !kodeKelasValid(state.LastCode) {
+		return false, "kode kelas belum valid atau belum disebutkan"
+	}
+	nama := state.Nama
+	if nama == "" {
+		nama = "Siswa"
+	}
+	siswa, token, err := s.siswaService.JoinSiswa(state.LastCode, nama)
+	if err != nil {
+		state.FailedCode = state.LastCode
+		save()
+		return false, err.Error()
+	}
+	namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
+	konten := s.siswaService.HitungKontenKelas(siswa.KelasID)
+
+	state.Joined = true
+	state.KelasNama = namaKelas
+	state.Nama = siswa.Nama
+	state.KelasID = siswa.KelasID
+	state.SiswaID = siswa.ID
+	state.Konten = konten
+	state.FailedCode = ""
+	state.PendingJoin = &JoinInfo{
+		SiswaID: siswa.ID, KelasID: siswa.KelasID, Nama: siswa.Nama,
+		KelasNama: namaKelas, Token: token,
+	}
+	save()
+	s.progressRepo.Touch(siswa.ID) // PROGRESS: aktivitas pertama
+	return true, ""
 }
 
 func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
@@ -117,44 +155,38 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		}
 		state.LastCode = normalized
 		save()
-		return okResult(call, map[string]string{"kode": normalized})
+
+		// AUTO-JOIN: begitu kode valid, langsung daftarkan siswa.
+		// Ini menghapus loop "benarkah kode ini?" yang bikin AI stuck.
+		if !state.Joined {
+			ok, errStr := s.tryJoinKelas(state, save)
+			if ok {
+				return okResult(call, map[string]interface{}{
+					"kode":       normalized,
+					"status":     "auto_joined",
+					"siswa_id":   state.SiswaID,
+					"nama":       state.Nama,
+					"kelas_nama": state.KelasNama,
+					"konten":     state.Konten,
+					"instruksi":  "Siswa SUDAH terdaftar di kelas ini. JANGAN minta konfirmasi kode lagi. Sambut siswa ke kelas dan tawarkan: lihat daftar materi atau mulai kuis.",
+				})
+			}
+			return okResult(call, map[string]interface{}{
+				"kode":      normalized,
+				"status":    "join_gagal",
+				"error":     errStr,
+				"instruksi": "Kode tidak ditemukan/tidak berlaku. Beri tahu siswa dengan ramah dan minta kode 6 digit yang lain.",
+			})
+		}
+		return okResult(call, map[string]interface{}{"kode": normalized, "status": "sudah_join"})
 
 	case "join_kelas":
-		if state.Joined {
-			return okResult(call, map[string]interface{}{"sudah_join": true})
+		ok, errStr := s.tryJoinKelas(state, save)
+		if !ok {
+			return errResult(call, errStr)
 		}
-		if !kodeKelasValid(state.LastCode) {
-			return errResult(call, "kode kelas belum valid atau belum disebutkan")
-		}
-		nama := state.Nama
-		if nama == "" {
-			nama = "Siswa"
-		}
-		siswa, token, err := s.siswaService.JoinSiswa(state.LastCode, nama)
-		if err != nil {
-			state.FailedCode = state.LastCode
-			save()
-			return errResult(call, err.Error())
-		}
-		namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
-		konten := s.siswaService.HitungKontenKelas(siswa.KelasID)
-
-		state.Joined = true
-		state.KelasNama = namaKelas
-		state.Nama = siswa.Nama
-		state.KelasID = siswa.KelasID
-		state.SiswaID = siswa.ID
-		state.Konten = konten
-		state.FailedCode = ""
-		state.PendingJoin = &JoinInfo{
-			SiswaID: siswa.ID, KelasID: siswa.KelasID, Nama: siswa.Nama,
-			KelasNama: namaKelas, Token: token,
-		}
-		save()
-		s.progressRepo.Touch(siswa.ID) // PROGRESS: aktivitas pertama
-
 		return okResult(call, map[string]interface{}{
-			"siswa_id": siswa.ID, "nama": siswa.Nama, "kelas_nama": namaKelas, "konten": konten,
+			"siswa_id": state.SiswaID, "nama": state.Nama, "kelas_nama": state.KelasNama, "konten": state.Konten,
 		})
 
 	case "get_kelas_info":

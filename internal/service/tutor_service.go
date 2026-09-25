@@ -232,7 +232,38 @@ func (s *TutorService) buildSessionState(sessionID string) map[string]interface{
 	return payload
 }
 
+// ProcessTutor: wrapper dengan (1) touch aktivitas siswa dan (2) retry 1x
+// khusus untuk kegagalan cepat karena rate limit provider (HTTP 429).
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
+	// PROGRESS: setiap pesan dari siswa yang sudah join = aktivitas (async, tidak memperlambat respons)
+	if st := s.loadState(sessionID); st.SiswaID > 0 && s.progressRepo != nil {
+		siswaID := st.SiswaID
+		go s.progressRepo.Touch(siswaID)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		res, err := s.processTutorOnce(sessionID, kelasNama, pesanSiswa)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+
+		// Retry HANYA untuk kegagalan cepat rate-limit (429). Timeout 90s tidak di-retry
+		// biar total latency tidak meledak.
+		em := err.Error()
+		retryable := strings.Contains(em, "429") || strings.Contains(em, "RateLimit")
+		if !retryable || attempt == 2 {
+			return nil, err
+		}
+		log.Printf("[tutor] attempt %d kena rate limit (%v), retry dalam 3 detik...", attempt, err)
+		time.Sleep(3 * time.Second)
+	}
+	return nil, lastErr
+}
+
+// processTutorOnce: satu putaran kirim job ke AI Service tanpa retry
+func (s *TutorService) processTutorOnce(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
 
 	if strings.TrimSpace(pesanSiswa) == "" {
