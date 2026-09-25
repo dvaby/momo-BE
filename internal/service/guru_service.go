@@ -15,11 +15,13 @@ type GuruService interface {
 	Register(req *model.RegisterGuruRequest) (*model.Guru, error)
 	Login(req *model.LoginGuruRequest) (*model.LoginGuruResponse, error)
 	VerifyEmail(token string) error
+	GetProfile(guruID uint) (*model.Guru, error)
+	UpdateProfile(guruID uint, req *model.UpdateProfileRequest) (*model.Guru, error)
 }
 
 type guruService struct {
 	guruRepo    repository.GuruRepository
-	emailClient *emailsender.Client // Tetap ada agar tidak error compile, tapi tidak dipakai
+	emailClient *emailsender.Client
 	appBaseURL  string
 }
 
@@ -42,7 +44,6 @@ func (s *guruService) Register(req *model.RegisterGuruRequest) (*model.Guru, err
 		return nil, errors.New("gagal memproses password")
 	}
 
-	// PERUBAHAN: Langsung set email_verified = true, skip email sending
 	guru := &model.Guru{
 		Nama:              req.Nama,
 		Email:             req.Email,
@@ -68,11 +69,6 @@ func (s *guruService) Login(req *model.LoginGuruRequest) (*model.LoginGuruRespon
 		return nil, errors.New("email atau password salah")
 	}
 
-	// PERUBAHAN: Hapus pengecekan email_verified agar guru bisa langsung login
-	// if !guru.EmailVerified {
-	// 	return nil, errors.New("email belum diverifikasi")
-	// }
-
 	token, err := jwtutil.GenerateGuruToken(guru.ID)
 	if err != nil {
 		return nil, errors.New("gagal membuat token autentikasi")
@@ -85,6 +81,46 @@ func (s *guruService) Login(req *model.LoginGuruRequest) (*model.LoginGuruRespon
 }
 
 func (s *guruService) VerifyEmail(token string) error {
-	// Fitur ini dinonaktifkan sementara
 	return errors.New("verifikasi email dinonaktifkan")
+}
+
+// GetProfile - ambil data guru, password di-zero sebelum return
+func (s *guruService) GetProfile(guruID uint) (*model.Guru, error) {
+	guru, err := s.guruRepo.FindByID(guruID)
+	if err != nil {
+		return nil, errors.New("guru tidak ditemukan")
+	}
+	guru.Password = ""
+	return guru, nil
+}
+
+// UpdateProfile - update nama dan/atau password
+func (s *guruService) UpdateProfile(guruID uint, req *model.UpdateProfileRequest) (*model.Guru, error) {
+	guru, err := s.guruRepo.FindByID(guruID)
+	if err != nil {
+		return nil, errors.New("guru tidak ditemukan")
+	}
+
+	if req.Nama == "" && req.Password == "" {
+		return nil, errors.New("minimal salah satu field (nama atau password) harus diisi")
+	}
+
+	if req.Nama != "" {
+		guru.Nama = req.Nama
+	}
+
+	if req.Password != "" {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, errors.New("gagal memproses password")
+		}
+		guru.Password = string(hashedPassword)
+	}
+
+	if err := s.guruRepo.Update(guru); err != nil {
+		return nil, errors.New("gagal memperbarui profil")
+	}
+
+	guru.Password = ""
+	return guru, nil
 }

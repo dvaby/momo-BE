@@ -16,13 +16,11 @@ func NewKelasService(repo *repository.KelasRepository, modulRepo repository.Modu
 	return &KelasService{repo: repo, modulRepo: modulRepo}
 }
 
-// CREATE - Buat kelas baru
 func (s *KelasService) CreateKelas(guruID uint, nama string, mataPelajaran string) (*model.Kelas, error) {
 	if nama == "" {
 		return nil, fmt.Errorf("nama kelas wajib diisi")
 	}
 
-	// Generate kode kelas unik (6 digit angka)
 	var kode string
 	for {
 		kode = kodegenerator.GenerateKodeKelas()
@@ -38,7 +36,7 @@ func (s *KelasService) CreateKelas(guruID uint, nama string, mataPelajaran strin
 	kelas := &model.Kelas{
 		GuruID:        guruID,
 		NamaKelas:     nama,
-		MataPelajaran: mataPelajaran, // Bisa kosong (nullable)
+		MataPelajaran: mataPelajaran,
 		KodeKelas:     kode,
 	}
 
@@ -50,12 +48,10 @@ func (s *KelasService) CreateKelas(guruID uint, nama string, mataPelajaran strin
 	return kelas, nil
 }
 
-// READ - Dapatkan semua kelas milik guru
 func (s *KelasService) GetKelasByGuruID(guruID uint) ([]model.Kelas, error) {
 	return s.repo.FindByGuruID(guruID)
 }
 
-// READ - Dapatkan kelas by ID dengan validasi ownership
 func (s *KelasService) GetKelasByID(id, guruID uint) (*model.Kelas, error) {
 	kelas, err := s.repo.FindByIDAndGuruID(id, guruID)
 	if err != nil || kelas == nil {
@@ -64,7 +60,6 @@ func (s *KelasService) GetKelasByID(id, guruID uint) (*model.Kelas, error) {
 	return kelas, nil
 }
 
-// UPDATE - Update kelas
 func (s *KelasService) UpdateKelas(id, guruID uint, nama string, mataPelajaran string) (*model.Kelas, error) {
 	kelas, err := s.repo.FindByIDAndGuruID(id, guruID)
 	if err != nil || kelas == nil {
@@ -84,14 +79,14 @@ func (s *KelasService) UpdateKelas(id, guruID uint, nama string, mataPelajaran s
 	return kelas, nil
 }
 
-// DELETE - Hapus kelas
+// DeleteKelas - CASCADE: hapus kelas + siswa + jawaban + progress + relasi modul
 func (s *KelasService) DeleteKelas(id, guruID uint) error {
 	kelas, err := s.repo.FindByIDAndGuruID(id, guruID)
 	if err != nil || kelas == nil {
 		return fmt.Errorf("kelas tidak ditemukan atau Anda tidak memiliki akses")
 	}
 
-	err = s.repo.Delete(id)
+	err = s.repo.DeleteWithCascade(id)
 	if err != nil {
 		return fmt.Errorf("gagal menghapus kelas: %w", err)
 	}
@@ -99,7 +94,6 @@ func (s *KelasService) DeleteKelas(id, guruID uint) error {
 	return nil
 }
 
-// Assign modul ke kelas
 func (s *KelasService) AssignModul(kelasID, modulID, guruID uint) error {
 	kelas, err := s.repo.FindByIDAndGuruID(kelasID, guruID)
 	if err != nil || kelas == nil {
@@ -114,7 +108,6 @@ func (s *KelasService) AssignModul(kelasID, modulID, guruID uint) error {
 	return s.repo.AssignModul(kelas, modul)
 }
 
-// Remove modul dari kelas
 func (s *KelasService) RemoveModul(kelasID, modulID, guruID uint) error {
 	kelas, err := s.repo.FindByIDAndGuruID(kelasID, guruID)
 	if err != nil || kelas == nil {
@@ -124,7 +117,6 @@ func (s *KelasService) RemoveModul(kelasID, modulID, guruID uint) error {
 	return s.repo.RemoveModul(kelas, modulID)
 }
 
-// Join kelas dengan kode
 func (s *KelasService) JoinKelasWithKode(kodeKelas, namaSiswa string) (*model.Kelas, error) {
 	kelas, err := s.repo.FindByKodeKelas(kodeKelas)
 	if err != nil {
@@ -134,7 +126,6 @@ func (s *KelasService) JoinKelasWithKode(kodeKelas, namaSiswa string) (*model.Ke
 	return kelas, nil
 }
 
-// GetKelasByGuruIDPaginated mengambil kelas dengan pagination
 func (s *KelasService) GetKelasByGuruIDPaginated(guruID uint, limit, offset int) ([]model.Kelas, int64, error) {
 	return s.repo.FindByGuruIDWithPagination(guruID, limit, offset)
 }

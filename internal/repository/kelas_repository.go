@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"fmt"
+
 	"gorm.io/gorm"
 	"momo-be/internal/model"
 )
@@ -49,6 +51,44 @@ func (r *KelasRepository) Delete(id uint) error {
 	return r.db.Delete(&model.Kelas{}, id).Error
 }
 
+// DeleteWithCascade menghapus kelas + seluruh data terkait dalam 1 transaksi
+func (r *KelasRepository) DeleteWithCascade(id uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Hapus jawaban_siswas milik semua siswa di kelas ini
+		if err := tx.Exec(`
+			DELETE FROM jawaban_siswas 
+			WHERE siswa_id IN (SELECT id FROM siswas WHERE kelas_id = ?)
+		`, id).Error; err != nil {
+			return fmt.Errorf("gagal menghapus jawaban siswa: %w", err)
+		}
+
+		// 2. Hapus siswa_progresses milik semua siswa di kelas ini
+		if err := tx.Exec(`
+			DELETE FROM siswa_progresses 
+			WHERE siswa_id IN (SELECT id FROM siswas WHERE kelas_id = ?)
+		`, id).Error; err != nil {
+			return fmt.Errorf("gagal menghapus progress siswa: %w", err)
+		}
+
+		// 3. Hapus siswas di kelas ini
+		if err := tx.Where("kelas_id = ?", id).Delete(&model.Siswa{}).Error; err != nil {
+			return fmt.Errorf("gagal menghapus siswa: %w", err)
+		}
+
+		// 4. Hapus relasi kelas_moduls (many-to-many)
+		if err := tx.Exec("DELETE FROM kelas_moduls WHERE kelas_id = ?", id).Error; err != nil {
+			return fmt.Errorf("gagal menghapus relasi modul: %w", err)
+		}
+
+		// 5. Hapus kelas
+		if err := tx.Delete(&model.Kelas{}, id).Error; err != nil {
+			return fmt.Errorf("gagal menghapus kelas: %w", err)
+		}
+
+		return nil
+	})
+}
+
 func (r *KelasRepository) IsKodeExists(kode string) (bool, error) {
 	var count int64
 	err := r.db.Model(&model.Kelas{}).Where("kode_kelas = ?", kode).Count(&count).Error
@@ -67,7 +107,6 @@ func (r *KelasRepository) RemoveModul(kelas *model.Kelas, modulID uint) error {
 	return r.db.Model(kelas).Association("Modul").Delete(&modul)
 }
 
-// FindByKode mencari kelas berdasarkan kode_kelas
 func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 	var kelas model.Kelas
 	err := r.db.Where("kode_kelas = ?", kode).First(&kelas).Error
@@ -77,15 +116,12 @@ func (r *KelasRepository) FindByKode(kode string) (*model.Kelas, error) {
 	return &kelas, nil
 }
 
-// IsModulInKelas mengecek apakah modul sudah di-assign ke kelas tertentu
 func (r *KelasRepository) IsModulInKelas(kelasID, modulID uint) (bool, error) {
 	var count int64
-	// 'kelas_moduls' adalah nama tabel many-to-many default dari GORM berdasarkan model kamu
 	err := r.db.Table("kelas_moduls").Where("kelas_id = ? AND modul_id = ?", kelasID, modulID).Count(&count).Error
 	return count > 0, err
 }
 
-// FindByGuruIDWithPagination mengambil daftar kelas dengan pagination
 func (r *KelasRepository) FindByGuruIDWithPagination(guruID uint, limit, offset int) ([]model.Kelas, int64, error) {
 	var kelass []model.Kelas
 	var total int64
@@ -105,7 +141,7 @@ func (r *KelasRepository) FindByGuruIDWithPagination(guruID uint, limit, offset 
 
 	return kelass, total, nil
 }
-// HitungMateriKelas menghitung total materi di semua modul milik kelas.
+
 func (r *KelasRepository) HitungMateriKelas(kelasID uint) int64 {
 	var count int64
 	r.db.Table("materis").
@@ -116,7 +152,6 @@ func (r *KelasRepository) HitungMateriKelas(kelasID uint) int64 {
 	return count
 }
 
-// HitungSoalKelas menghitung total soal di semua modul milik kelas.
 func (r *KelasRepository) HitungSoalKelas(kelasID uint) int64 {
 	var count int64
 	r.db.Table("soals").

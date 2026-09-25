@@ -124,6 +124,8 @@ chatAuth.Use(middleware.UnifiedAuthMiddleware())
 			guruAuth.PUT("/kelas/:id", kelasHandler.UpdateKelas)
 			guruAuth.DELETE("/kelas/:id", kelasHandler.DeleteKelas)
 			guruAuth.GET("/kelas/:id/progress", progressHandler.GetProgressKelas)
+			guruAuth.GET("/profile", guruHandler.GetProfile)
+			guruAuth.PUT("/profile", guruHandler.UpdateProfile)
 
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)

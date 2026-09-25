@@ -29,3 +29,8 @@ type LoginGuruResponse struct {
 	Token string `json:"token"`
 	Guru  Guru   `json:"guru"`
 }
+
+type UpdateProfileRequest struct {
+	Nama     string `json:"nama" binding:"omitempty,min=2"`
+	Password string `json:"password" binding:"omitempty,min=6"`
+}

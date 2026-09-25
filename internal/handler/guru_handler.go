@@ -88,3 +88,78 @@ func (h *GuruHandler) VerifyEmail(c *gin.Context) {
 
 	c.Redirect(http.StatusFound, h.feVerifyURL+"?status=success")
 }
+
+// GetProfile - GET /api/v1/guru/profile
+func (h *GuruHandler) GetProfile(c *gin.Context) {
+	guruIDUint, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    "UNAUTHORIZED",
+			"message": "Token tidak valid atau tidak ditemukan",
+			"source":  "client",
+		})
+		return
+	}
+	guruID := guruIDUint.(uint)
+
+	guru, err := h.guruService.GetProfile(guruID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    "NOT_FOUND",
+			"message": err.Error(),
+			"source":  "client",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Profil berhasil diambil",
+		"data":    guru,
+	})
+}
+
+// UpdateProfile - PUT /api/v1/guru/profile
+func (h *GuruHandler) UpdateProfile(c *gin.Context) {
+	guruIDUint, exists := c.Get("guru_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    "UNAUTHORIZED",
+			"message": "Token tidak valid atau tidak ditemukan",
+			"source":  "client",
+		})
+		return
+	}
+	guruID := guruIDUint.(uint)
+
+	var req model.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		errMsg := "Mohon lengkapi field dengan benar"
+		errStr := err.Error()
+		if strings.Contains(errStr, "Nama") || strings.Contains(errStr, "nama") {
+			errMsg = "Nama minimal 2 karakter"
+		} else if strings.Contains(errStr, "Password") || strings.Contains(errStr, "password") {
+			errMsg = "Password minimal 6 karakter"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "INVALID_REQUEST",
+			"message": errMsg,
+			"source":  "client",
+		})
+		return
+	}
+
+	guru, err := h.guruService.UpdateProfile(guruID, &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "INVALID_REQUEST",
+			"message": err.Error(),
+			"source":  "client",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Profil berhasil diperbarui",
+		"data":    guru,
+	})
+}
