@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"momo-be/internal/job"
+	"momo-be/internal/repository"
 	"momo-be/pkg/aiclient"
 )
 
@@ -34,7 +35,6 @@ type ChatResult struct {
 	JoinError   string    `json:"join_error,omitempty"`
 }
 
-// StateBelajar melacak progres pembacaan materi
 type StateBelajar struct {
 	Fase         string `json:"fase"`
 	MateriID     uint   `json:"materi_id"`
@@ -42,6 +42,21 @@ type StateBelajar struct {
 	MateriKonten string `json:"materi_konten"`
 	ModulNama    string `json:"modul_nama"`
 	ProgressBaca int    `json:"progress_baca"`
+}
+
+// SessionData adalah seluruh state percakapan yang dipersistenkan ke DB
+type SessionData struct {
+	Nama        string        `json:"nama"`
+	LastCode    string        `json:"last_code"`
+	FailedCode  string        `json:"failed_code"`
+	Joined      bool          `json:"joined"`
+	KelasNama   string        `json:"kelas_nama"`
+	KelasID     uint          `json:"kelas_id"`
+	SiswaID     uint          `json:"siswa_id"`
+	Konten      KontenKelas   `json:"konten"`
+	Belajar     *StateBelajar `json:"belajar"`
+	Kuis        *StateKuis    `json:"kuis"`
+	PendingJoin *JoinInfo     `json:"pending_join,omitempty"`
 }
 
 // ========== Helper package (hanya ADA DI FILE INI) ==========
@@ -67,7 +82,6 @@ func kodeKelasValid(kode string) bool {
 	return true
 }
 
-// extractKodeKelas menormalkan noise STT menjadi 6 digit
 func extractKodeKelas(pesan string, prevCode string) string {
 	if m := sixDigits.FindString(pesan); m != "" {
 		return m
@@ -111,20 +125,12 @@ type TutorService struct {
 	toolsExecURL string
 	siswaService *SiswaService
 	kuisService  *KuisService
+	repo         repository.SessionStateRepository
+	progressRepo *repository.ProgressRepository
 
-	mu                 sync.Mutex
-	sessionLastCode    map[string]string
-	sessionFailedCode  map[string]string
-	sessionJoined      map[string]bool
-	sessionKelasNama   map[string]string
-	sessionNama        map[string]string
-	sessionKelasID     map[string]uint
-	sessionKonten      map[string]KontenKelas
-	sessionBelajar     map[string]*StateBelajar
-	sessionKuis        map[string]*StateKuis
-	sessionSiswaID     map[string]uint
-	sessionBusy        map[string]bool
-	sessionPendingJoin map[string]*JoinInfo
+	mu          sync.Mutex
+	cache       map[string]*SessionData // cache in-memory (DB = sumber kebenaran)
+	sessionBusy map[string]bool
 }
 
 func NewTutorService(
@@ -134,73 +140,101 @@ func NewTutorService(
 	toolsExecURL string,
 	siswaService *SiswaService,
 	kuisService *KuisService,
+	repo repository.SessionStateRepository,
+	progressRepo *repository.ProgressRepository,
 ) *TutorService {
 	return &TutorService{
-		aiClient:           aiClient,
-		jobRegistry:        jobRegistry,
-		callbackURL:        callbackURL,
-		toolsExecURL:       toolsExecURL,
-		siswaService:       siswaService,
-		kuisService:        kuisService,
-		sessionLastCode:    make(map[string]string),
-		sessionFailedCode:  make(map[string]string),
-		sessionJoined:      make(map[string]bool),
-		sessionKelasNama:   make(map[string]string),
-		sessionNama:        make(map[string]string),
-		sessionKelasID:     make(map[string]uint),
-		sessionKonten:      make(map[string]KontenKelas),
-		sessionBelajar:     make(map[string]*StateBelajar),
-		sessionKuis:        make(map[string]*StateKuis),
-		sessionSiswaID:     make(map[string]uint),
-		sessionBusy:        make(map[string]bool),
-		sessionPendingJoin: make(map[string]*JoinInfo),
+		aiClient:     aiClient,
+		jobRegistry:  jobRegistry,
+		callbackURL:  callbackURL,
+		toolsExecURL: toolsExecURL,
+		siswaService: siswaService,
+		kuisService:  kuisService,
+		repo:         repo,
+		progressRepo: progressRepo,
+		cache:        make(map[string]*SessionData),
+		sessionBusy:  make(map[string]bool),
 	}
 }
 
-func (s *TutorService) currentFase(sessionID string) string {
+// loadState: cache dulu, kalau miss ambil dari DB (cache-aside)
+func (s *TutorService) loadState(sessionID string) *SessionData {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sessionJoined[sessionID] {
+	if st, ok := s.cache[sessionID]; ok {
+		s.mu.Unlock()
+		return st
+	}
+	s.mu.Unlock()
+
+	st := &SessionData{}
+	if jsonStr, err := s.repo.Get(sessionID); err == nil && jsonStr != "" {
+		if err := json.Unmarshal([]byte(jsonStr), st); err != nil {
+			log.Printf("[session] gagal unmarshal %s: %v", sessionID, err)
+			st = &SessionData{}
+		}
+	}
+	s.mu.Lock()
+	s.cache[sessionID] = st
+	s.mu.Unlock()
+	return st
+}
+
+// saveState: write-through ke cache + DB
+func (s *TutorService) saveState(sessionID string, st *SessionData) {
+	s.mu.Lock()
+	s.cache[sessionID] = st
+	s.mu.Unlock()
+	b, err := json.Marshal(st)
+	if err != nil {
+		log.Printf("[session] gagal marshal %s: %v", sessionID, err)
+		return
+	}
+	if err := s.repo.Save(sessionID, string(b)); err != nil {
+		log.Printf("[session] gagal save ke DB %s: %v", sessionID, err)
+	}
+}
+
+func (s *TutorService) deleteState(sessionID string) {
+	s.mu.Lock()
+	delete(s.cache, sessionID)
+	s.mu.Unlock()
+	_ = s.repo.Delete(sessionID)
+}
+
+func (s *TutorService) currentFase(sessionID string) string {
+	if s.loadState(sessionID).Joined {
 		return "belajar"
 	}
 	return "onboarding"
 }
 
-// buildSessionState menyusun snapshot state yang dikirim ke AI Service
 func (s *TutorService) buildSessionState(sessionID string) map[string]interface{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state := map[string]interface{}{
-		"nama":          s.sessionNama[sessionID],
-		"kode_kelas":    s.sessionLastCode[sessionID],
-		"joined":        s.sessionJoined[sessionID],
-		"kelas_nama":    s.sessionKelasNama[sessionID],
-		"konten":        s.sessionKonten[sessionID],
-		"state_belajar": s.sessionBelajar[sessionID],
+	st := s.loadState(sessionID)
+	payload := map[string]interface{}{
+		"nama":          st.Nama,
+		"kode_kelas":    st.LastCode,
+		"joined":        st.Joined,
+		"kelas_nama":    st.KelasNama,
+		"konten":        st.Konten,
+		"state_belajar": st.Belajar,
 	}
-
-	// Kirim state kuis ke AI Service biar LLM tahu sedang di tengah kuis
-	if kuis := s.sessionKuis[sessionID]; kuis != nil {
-		state["state_kuis"] = map[string]interface{}{
-			"jenis":      kuis.Jenis,
-			"index":      kuis.Index,
-			"total":      kuis.Total,
-			"skor":       kuis.Skor,
-			"soal_aktif": kuis.SoalAktif,
+	if st.Kuis != nil {
+		payload["state_kuis"] = map[string]interface{}{
+			"jenis":      st.Kuis.Jenis,
+			"index":      st.Kuis.Index,
+			"total":      st.Kuis.Total,
+			"skor":       st.Kuis.Skor,
+			"soal_aktif": st.Kuis.SoalAktif,
 		}
 		log.Printf("[tutor] state_kuis dikirim ke AI: jenis=%s index=%d total=%d skor=%d",
-			kuis.Jenis, kuis.Index, kuis.Total, kuis.Skor)
+			st.Kuis.Jenis, st.Kuis.Index, st.Kuis.Total, st.Kuis.Skor)
 	}
-
-	return state
+	return payload
 }
 
-// ProcessTutor mode v2: backend tipis, AI yang jadi otak percakapan via function calling
 func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSiswa string) (*ChatResult, error) {
 	jobID := job.GenerateID("tutor")
 
-	// Guard 1: pesan kosong (mic tidak menangkap suara)
 	if strings.TrimSpace(pesanSiswa) == "" {
 		return &ChatResult{
 			JobID:   jobID,
@@ -209,7 +243,7 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		}, nil
 	}
 
-	// Guard 2: anti double-send — satu session hanya boleh punya 1 job berjalan
+	// Guard anti double-send
 	s.mu.Lock()
 	if s.sessionBusy[sessionID] {
 		s.mu.Unlock()
@@ -251,19 +285,9 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 	if finished == nil {
 		return nil, fmt.Errorf("timeout menunggu balasan tutor (90 detik)")
 	}
-	
 	if finished.Status == "failed" {
-    errMsg := finished.Error
-    // Deteksi rate limit — kasih balasan ramah, bukan error 503
-    if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "RateLimit") {
-        return &ChatResult{
-            JobID:   jobID,
-            Balasan: "Maaf, aku lagi agak sibuk nih. Coba lagi dalam 10 detik ya? Aku pasti jawab!",
-            Fase:    s.currentFase(sessionID),
-        }, nil
-    }
-    return nil, fmt.Errorf("AI gagal: %s", errMsg)
-}
+		return nil, fmt.Errorf("AI tutor gagal memproses: %s", finished.Error)
+	}
 
 	var hasil struct {
 		Balasan string `json:"balasan"`
@@ -279,26 +303,23 @@ func (s *TutorService) ProcessTutor(sessionID string, kelasNama string, pesanSis
 		Fase:    hasil.Fase,
 	}
 
-	// Lampirkan join yang terjadi di giliran ini (hasil tool join_kelas)
-	s.mu.Lock()
-	pending := s.sessionPendingJoin[sessionID]
-	delete(s.sessionPendingJoin, sessionID)
-	joined := s.sessionJoined[sessionID]
-	s.mu.Unlock()
-	if pending != nil {
-		out.Join = pending
+	// Lampirkan join yang terjadi giliran ini, lalu bersihkan
+	st := s.loadState(sessionID)
+	if st.PendingJoin != nil {
+		out.Join = st.PendingJoin
 		out.Fase = "belajar"
-		log.Printf("[tutor] join dilampirkan ke response: siswa %d kelas %s", pending.SiswaID, pending.KelasNama)
+		st.PendingJoin = nil
+		s.saveState(sessionID, st)
+		log.Printf("[tutor] join dilampirkan ke response: siswa %d kelas %s", st.SiswaID, st.KelasNama)
 	}
 
-	// Safety net minimal
 	if out.Balasan == "" {
 		out.Balasan = pilihAcak([]string{"Maaf, aku tadi sempat blank. Bisa diulang lagi?", "Eh, ucapanku tadi belum keluar. Kamu bilang apa?"})
 	}
-	if joined && out.Fase != "belajar" {
+	if st.Joined && out.Fase != "belajar" {
 		out.Fase = "belajar"
 	}
-	if !joined && out.Fase == "belajar" {
+	if !st.Joined && out.Fase == "belajar" {
 		out.Fase = "onboarding"
 	}
 

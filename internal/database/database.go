@@ -46,6 +46,8 @@ func Connect(cfg *config.Config) *gorm.DB {
 		&model.Kelas{},
 		&model.Siswa{},
 		&model.JawabanSiswa{},
+		&model.SessionRecord{},   
+		&model.SiswaProgress{},   
 	)
 	if err != nil {
 		log.Fatalf("Gagal melakukan auto migration: %v", err)

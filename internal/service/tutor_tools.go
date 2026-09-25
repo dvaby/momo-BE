@@ -38,14 +38,9 @@ func propInt(desc string) map[string]interface{} {
 }
 
 func schema(props map[string]interface{}, required ...string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":       "object",
-		"properties": props,
-		"required":   required,
-	}
+	return map[string]interface{}{"type": "object", "properties": props, "required": required}
 }
 
-// GetToolDefinitions daftar kemampuan backend yang boleh dipanggil AI
 func GetToolDefinitions() []ToolDefinition {
 	empty := schema(map[string]interface{}{})
 	return []ToolDefinition{
@@ -67,7 +62,6 @@ func GetToolDefinitions() []ToolDefinition {
 	}
 }
 
-// ExecuteToolCalls dipakai handler endpoint internal tools
 func (s *TutorService) ExecuteToolCalls(sessionID string, calls []ToolCall) []ToolResult {
 	results := make([]ToolResult, 0, len(calls))
 	for _, call := range calls {
@@ -87,6 +81,9 @@ func errResult(call ToolCall, msg string) ToolResult {
 }
 
 func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
+	state := s.loadState(sessionID)
+	save := func() { s.saveState(sessionID, state) }
+
 	switch call.Name {
 
 	case "set_nama_siswa":
@@ -103,9 +100,8 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if r := []rune(nama); len(r) > 40 {
 			nama = string(r[:40])
 		}
-		s.mu.Lock()
-		s.sessionNama[sessionID] = nama
-		s.mu.Unlock()
+		state.Nama = nama
+		save()
 		return okResult(call, map[string]string{"nama": nama})
 
 	case "set_kode_kelas":
@@ -115,104 +111,72 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return errResult(call, "arguments tidak valid")
 		}
-		s.mu.Lock()
-		prev := s.sessionLastCode[sessionID]
-		s.mu.Unlock()
-		normalized := extractKodeKelas(args.Kode, prev)
+		normalized := extractKodeKelas(args.Kode, state.LastCode)
 		if normalized == "" {
 			return errResult(call, "tidak ditemukan 6 digit angka pada kode")
 		}
-		s.mu.Lock()
-		s.sessionLastCode[sessionID] = normalized
-		s.mu.Unlock()
+		state.LastCode = normalized
+		save()
 		return okResult(call, map[string]string{"kode": normalized})
 
 	case "join_kelas":
-		s.mu.Lock()
-		kode := s.sessionLastCode[sessionID]
-		nama := s.sessionNama[sessionID]
-		joined := s.sessionJoined[sessionID]
-		s.mu.Unlock()
-
-		if joined {
+		if state.Joined {
 			return okResult(call, map[string]interface{}{"sudah_join": true})
 		}
-		if !kodeKelasValid(kode) {
+		if !kodeKelasValid(state.LastCode) {
 			return errResult(call, "kode kelas belum valid atau belum disebutkan")
 		}
+		nama := state.Nama
 		if nama == "" {
 			nama = "Siswa"
 		}
-
-		siswa, token, err := s.siswaService.JoinSiswa(kode, nama)
+		siswa, token, err := s.siswaService.JoinSiswa(state.LastCode, nama)
 		if err != nil {
-			s.mu.Lock()
-			s.sessionFailedCode[sessionID] = kode
-			s.mu.Unlock()
+			state.FailedCode = state.LastCode
+			save()
 			return errResult(call, err.Error())
 		}
-
 		namaKelas, _ := s.siswaService.NamaKelasByID(siswa.KelasID)
 		konten := s.siswaService.HitungKontenKelas(siswa.KelasID)
 
-		s.mu.Lock()
-		s.sessionJoined[sessionID] = true
-		s.sessionKelasNama[sessionID] = namaKelas
-		s.sessionNama[sessionID] = siswa.Nama
-		s.sessionKelasID[sessionID] = siswa.KelasID
-		s.sessionKonten[sessionID] = konten
-		s.sessionSiswaID[sessionID] = siswa.ID
-		delete(s.sessionFailedCode, sessionID)
-		// token disimpan di backend saja, dikirim ke FE lewat response /chat
-		s.sessionPendingJoin[sessionID] = &JoinInfo{
-			SiswaID:   siswa.ID,
-			KelasID:   siswa.KelasID,
-			Nama:      siswa.Nama,
-			KelasNama: namaKelas,
-			Token:     token,
+		state.Joined = true
+		state.KelasNama = namaKelas
+		state.Nama = siswa.Nama
+		state.KelasID = siswa.KelasID
+		state.SiswaID = siswa.ID
+		state.Konten = konten
+		state.FailedCode = ""
+		state.PendingJoin = &JoinInfo{
+			SiswaID: siswa.ID, KelasID: siswa.KelasID, Nama: siswa.Nama,
+			KelasNama: namaKelas, Token: token,
 		}
-		s.mu.Unlock()
+		save()
+		s.progressRepo.Touch(siswa.ID) // PROGRESS: aktivitas pertama
 
 		return okResult(call, map[string]interface{}{
-			"siswa_id":   siswa.ID,
-			"nama":       siswa.Nama,
-			"kelas_nama": namaKelas,
-			"konten":     konten,
+			"siswa_id": siswa.ID, "nama": siswa.Nama, "kelas_nama": namaKelas, "konten": konten,
 		})
 
 	case "get_kelas_info":
-		s.mu.Lock()
-		kelasNama := s.sessionKelasNama[sessionID]
-		konten := s.sessionKonten[sessionID]
-		joined := s.sessionJoined[sessionID]
-		s.mu.Unlock()
-		if !joined {
+		if !state.Joined {
 			return errResult(call, "siswa belum join kelas")
 		}
-		return okResult(call, map[string]interface{}{"kelas_nama": kelasNama, "konten": konten})
+		return okResult(call, map[string]interface{}{"kelas_nama": state.KelasNama, "konten": state.Konten})
 
 	case "list_materi":
-		s.mu.Lock()
-		kelasID := s.sessionKelasID[sessionID]
-		joined := s.sessionJoined[sessionID]
-		s.mu.Unlock()
-		if !joined {
+		if !state.Joined {
 			return errResult(call, "siswa belum join kelas")
 		}
-		list, err := s.siswaService.GetDaftarMateri(kelasID)
+		list, err := s.siswaService.GetDaftarMateri(state.KelasID)
 		if err != nil {
 			return errResult(call, err.Error())
 		}
-		ringkas := make([]map[string]interface{}, 0, len(list))
+		ringkas := make([]map[string]interface{}, 0, 10)
 		for i, m := range list {
 			if i >= 10 {
 				break
 			}
-			ringkas = append(ringkas, map[string]interface{}{
-				"id":    m["id"],
-				"judul": m["judul"],
-				"modul": m["modul"],
-			})
+			ringkas = append(ringkas, map[string]interface{}{"id": m["id"], "judul": m["judul"], "modul": m["modul"]})
 		}
 		return okResult(call, map[string]interface{}{"total": len(list), "materi": ringkas})
 
@@ -227,11 +191,7 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if err != nil || materi == nil {
 			return errResult(call, "materi tidak ditemukan")
 		}
-		return okResult(call, map[string]interface{}{
-			"judul":  materi.Judul,
-			"modul":  modulNama,
-			"konten": materi.Konten,
-		})
+		return okResult(call, map[string]interface{}{"judul": materi.Judul, "modul": modulNama, "konten": materi.Konten})
 
 	case "pilih_materi":
 		var args struct {
@@ -244,72 +204,44 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if err != nil || materi == nil {
 			return errResult(call, "materi tidak ditemukan")
 		}
-		s.mu.Lock()
-		s.sessionBelajar[sessionID] = &StateBelajar{
-			Fase:         "siap_baca",
-			MateriID:     materi.ID,
-			MateriJudul:  materi.Judul,
-			MateriKonten: materi.Konten,
-			ModulNama:    modulNama,
-			ProgressBaca: 0,
+		state.Belajar = &StateBelajar{
+			Fase: "siap_baca", MateriID: materi.ID, MateriJudul: materi.Judul,
+			MateriKonten: materi.Konten, ModulNama: modulNama, ProgressBaca: 0,
 		}
-		s.mu.Unlock()
-		return okResult(call, map[string]interface{}{
-			"judul":           materi.Judul,
-			"modul":           modulNama,
-			"jumlah_karakter": len([]rune(materi.Konten)),
-		})
+		save()
+		return okResult(call, map[string]interface{}{"judul": materi.Judul, "modul": modulNama})
 
 	case "baca_bagian_pertama", "ulang_baca":
-		s.mu.Lock()
-		st := s.sessionBelajar[sessionID]
-		if st == nil || st.MateriKonten == "" {
-			s.mu.Unlock()
+		if state.Belajar == nil || state.Belajar.MateriKonten == "" {
 			return errResult(call, "belum ada materi yang dipilih")
 		}
-		first, _ := splitKonten(st.MateriKonten)
-		st.Fase = "baca"
-		st.ProgressBaca = 50
-		s.mu.Unlock()
-		return okResult(call, map[string]interface{}{"judul": st.MateriJudul, "bagian": first, "progress": 50})
+		first, _ := splitKonten(state.Belajar.MateriKonten)
+		state.Belajar.Fase = "baca"
+		state.Belajar.ProgressBaca = 50
+		save()
+		return okResult(call, map[string]interface{}{"judul": state.Belajar.MateriJudul, "bagian": first, "progress": 50})
 
 	case "baca_bagian_kedua":
-		s.mu.Lock()
-		st := s.sessionBelajar[sessionID]
-		if st == nil || st.MateriKonten == "" {
-			s.mu.Unlock()
+		if state.Belajar == nil || state.Belajar.MateriKonten == "" {
 			return errResult(call, "belum ada materi yang dipilih")
 		}
-		_, second := splitKonten(st.MateriKonten)
-		st.Fase = "selesai"
-		st.ProgressBaca = 100
-		s.mu.Unlock()
-		return okResult(call, map[string]interface{}{"judul": st.MateriJudul, "bagian": second, "progress": 100})
+		_, second := splitKonten(state.Belajar.MateriKonten)
+		materiID := state.Belajar.MateriID
+		state.Belajar.Fase = "selesai"
+		state.Belajar.ProgressBaca = 100
+		save()
+		s.progressRepo.SelesaikanMateri(state.SiswaID, materiID) // PROGRESS: materi selesai
+		return okResult(call, map[string]interface{}{"judul": state.Belajar.MateriJudul, "bagian": second, "progress": 100})
 
 	case "reset_percakapan":
-		s.mu.Lock()
-		delete(s.sessionLastCode, sessionID)
-		delete(s.sessionFailedCode, sessionID)
-		delete(s.sessionJoined, sessionID)
-		delete(s.sessionKelasNama, sessionID)
-		delete(s.sessionNama, sessionID)
-		delete(s.sessionKelasID, sessionID)
-		delete(s.sessionKonten, sessionID)
-		delete(s.sessionBelajar, sessionID)
-		delete(s.sessionKuis, sessionID)
-		delete(s.sessionPendingJoin, sessionID)
-		s.mu.Unlock()
+		s.deleteState(sessionID)
 		return okResult(call, map[string]string{"status": "session direset"})
 
 	case "list_soal":
-		s.mu.Lock()
-		kelasID := s.sessionKelasID[sessionID]
-		joined := s.sessionJoined[sessionID]
-		s.mu.Unlock()
-		if !joined {
+		if !state.Joined {
 			return errResult(call, "siswa belum join kelas")
 		}
-		info := s.kuisService.InfoSoalKelas(kelasID)
+		info := s.kuisService.InfoSoalKelas(state.KelasID)
 		return okResult(call, map[string]interface{}{"tersedia": len(info) > 0, "info": info})
 
 	case "mulai_kuis":
@@ -319,15 +251,11 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return errResult(call, "arguments tidak valid")
 		}
-		s.mu.Lock()
-		kelasID := s.sessionKelasID[sessionID]
-		joined := s.sessionJoined[sessionID]
-		s.mu.Unlock()
-		if !joined {
+		if !state.Joined {
 			return errResult(call, "siswa belum join kelas")
 		}
 		jenis := strings.ToLower(strings.TrimSpace(args.Jenis))
-		soals, err := s.kuisService.AmbilSoalKelas(kelasID, jenis, 5)
+		soals, err := s.kuisService.AmbilSoalKelas(state.KelasID, jenis, 5)
 		if err != nil || len(soals) == 0 {
 			return errResult(call, "tidak ada soal jenis "+jenis+" di kelas ini")
 		}
@@ -336,30 +264,22 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 			ids = append(ids, so.ID)
 		}
 		first := soals[0]
-		s.mu.Lock()
-		s.sessionKuis[sessionID] = &StateKuis{
-			Jenis:     jenis,
-			SoalIDs:   ids,
-			Index:     0,
-			Skor:      0,
-			Total:     len(ids),
+		state.Kuis = &StateKuis{
+			Jenis: jenis, SoalIDs: ids, Index: 0, Skor: 0, Total: len(ids),
 			SoalAktif: NewSoalAktif(1, len(ids), &first),
 		}
-		s.mu.Unlock()
+		save()
 		return okResult(call, map[string]interface{}{"jenis": jenis, "total": len(ids), "soal": FormatSoal(1, len(ids), &first)})
 
 	case "ulang_soal":
-		s.mu.Lock()
-		kuis := s.sessionKuis[sessionID]
-		s.mu.Unlock()
-		if kuis == nil || kuis.Index >= len(kuis.SoalIDs) {
+		if state.Kuis == nil || state.Kuis.Index >= len(state.Kuis.SoalIDs) {
 			return errResult(call, "tidak ada kuis aktif")
 		}
-		soal, err := s.kuisService.SoalByID(kuis.SoalIDs[kuis.Index])
+		soal, err := s.kuisService.SoalByID(state.Kuis.SoalIDs[state.Kuis.Index])
 		if err != nil {
 			return errResult(call, "soal tidak ditemukan")
 		}
-		return okResult(call, map[string]interface{}{"soal": FormatSoal(kuis.Index+1, kuis.Total, soal)})
+		return okResult(call, map[string]interface{}{"soal": FormatSoal(state.Kuis.Index+1, state.Kuis.Total, soal)})
 
 	case "submit_jawaban":
 		var args struct {
@@ -368,14 +288,10 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return errResult(call, "arguments tidak valid")
 		}
-		s.mu.Lock()
-		kuis := s.sessionKuis[sessionID]
-		siswaID := s.sessionSiswaID[sessionID]
-		s.mu.Unlock()
-		if kuis == nil || kuis.Index >= len(kuis.SoalIDs) {
+		if state.Kuis == nil || state.Kuis.Index >= len(state.Kuis.SoalIDs) {
 			return errResult(call, "tidak ada kuis aktif")
 		}
-		soal, err := s.kuisService.SoalByID(kuis.SoalIDs[kuis.Index])
+		soal, err := s.kuisService.SoalByID(state.Kuis.SoalIDs[state.Kuis.Index])
 		if err != nil {
 			return errResult(call, "soal tidak ditemukan")
 		}
@@ -390,37 +306,30 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 		feedback := "Kurang tepat. Jawaban yang benar adalah " + strings.ToUpper(soal.KunciJawaban) + "."
 		if benar {
 			feedback = "Benar! Kerja bagus."
-			s.mu.Lock()
-			kuis.Skor++
-			s.mu.Unlock()
+			state.Kuis.Skor++
 		}
-		if siswaID > 0 {
-			_ = s.kuisService.SimpanJawaban(siswaID, soal.ID, args.Jawaban, huruf, benar, feedback)
+		if state.SiswaID > 0 {
+			_ = s.kuisService.SimpanJawaban(state.SiswaID, soal.ID, args.Jawaban, huruf, benar, feedback)
+			s.progressRepo.Touch(state.SiswaID) // PROGRESS: aktivitas kuis
 		}
-		s.mu.Lock()
-		kuis.Index++
-		index := kuis.Index
-		skor := kuis.Skor
-		s.mu.Unlock()
 
+		state.Kuis.Index++
+		skor := state.Kuis.Skor
 		res := map[string]interface{}{"terdeteksi": true, "huruf": huruf, "benar": benar, "feedback": feedback, "skor": skor}
-		if index >= len(kuis.SoalIDs) {
+		if state.Kuis.Index >= state.Kuis.Total {
 			res["selesai"] = true
-			res["skor_akhir"] = fmt.Sprintf("%d dari %d", skor, kuis.Total)
-			s.mu.Lock()
-			delete(s.sessionKuis, sessionID)
-			s.mu.Unlock()
+			res["skor_akhir"] = fmt.Sprintf("%d dari %d", skor, state.Kuis.Total)
+			state.Kuis = nil
 		} else {
-			next, errNext := s.kuisService.SoalByID(kuis.SoalIDs[index])
+			next, errNext := s.kuisService.SoalByID(state.Kuis.SoalIDs[state.Kuis.Index])
 			if errNext != nil {
 				return errResult(call, "soal berikutnya tidak ditemukan")
 			}
-			s.mu.Lock()
-			kuis.SoalAktif = NewSoalAktif(index+1, kuis.Total, next)
-			s.mu.Unlock()
+			state.Kuis.SoalAktif = NewSoalAktif(state.Kuis.Index+1, state.Kuis.Total, next)
 			res["selesai"] = false
-			res["soal_berikutnya"] = FormatSoal(index+1, kuis.Total, next)
+			res["soal_berikutnya"] = FormatSoal(state.Kuis.Index+1, state.Kuis.Total, next)
 		}
+		save()
 		return okResult(call, res)
 
 	default:
@@ -428,7 +337,6 @@ func (s *TutorService) executeTool(sessionID string, call ToolCall) ToolResult {
 	}
 }
 
-// splitKonten membelah konten di batas kalimat terdekat dari titik tengah
 func splitKonten(konten string) (string, string) {
 	r := []rune(konten)
 	n := len(r)

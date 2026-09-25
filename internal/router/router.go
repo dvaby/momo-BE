@@ -27,7 +27,8 @@ func SetupRouter(
 	aiCallbackHandler *handler.AICallbackHandler,
 	streamHandler *handler.StreamHandler,
 	tutorHandler *handler.TutorHandler,
-	siswaAuthMiddleware gin.HandlerFunc,   
+	siswaAuthMiddleware gin.HandlerFunc,
+	progressHandler *handler.ProgressHandler,   
 ) *gin.Engine {
 	r := gin.Default()
 
@@ -122,6 +123,7 @@ chatAuth.Use(middleware.UnifiedAuthMiddleware())
 			guruAuth.GET("/kelas/:id", kelasHandler.GetKelasByID)
 			guruAuth.PUT("/kelas/:id", kelasHandler.UpdateKelas)
 			guruAuth.DELETE("/kelas/:id", kelasHandler.DeleteKelas)
+			guruAuth.GET("/kelas/:kelas_id/progress", progressHandler.GetProgressKelas)
 
 			guruAuth.POST("/kelas/:id/siswa", siswaHandler.DaftarkanSiswa)
 			guruAuth.POST("/kelas/:id/modul", kelasHandler.AssignModul)

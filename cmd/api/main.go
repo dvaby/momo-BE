@@ -87,8 +87,11 @@ func main() {
 	log.Printf("[startup] tools exec URL: %s...%s", toolsExecURL[:40], toolsExecURL[len(toolsExecURL)-10:])
 
 	kuisService := service.NewKuisService(db)
-	tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, toolsExecURL, siswaService, kuisService)
+	sessionRepo := repository.NewSessionStateRepository(db)
+	progressRepo := repository.NewProgressRepository(db)
+	tutorService := service.NewTutorService(aiClient, jobRegistry, callbackURL, toolsExecURL, siswaService, kuisService, sessionRepo, progressRepo)
 
+	progressHandler := handler.NewProgressHandler(service.NewProgressService(db))
 	toolsHandler := handler.NewToolsHandler(tutorService, cfg.AIInternalToken)
 	tutorHandler := handler.NewTutorHandler(tutorService)
 
@@ -110,6 +113,7 @@ func main() {
 		streamHandler,
 		tutorHandler,
 		middleware.NewAuthMiddleware(siswaRepo),
+		progressHandler,
 	)
 
 	// Endpoint internal untuk AI Service memanggil tools backend (tanpa auth middleware, token di query param)
