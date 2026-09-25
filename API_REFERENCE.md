@@ -1132,6 +1132,113 @@ tombolMic.onclick = () => mulaiPercakapan({
 speak('Halo! Klik kanan untuk bicara, klik kiri untuk mendengarkan jawabanku.');
 ```
 
+
+C2. Dashboard Progress Siswa (Token Guru)
+GET /api/v1/kelas/:id/progress — Progress belajar siswa per kelas 🆕 (25 Sept)
+Auth: Token Guru
+Sumber data: tabel siswa_progresses (materi selesai + aktivitas) + jawaban_siswas (soal & nilai). Terisi otomatis dari aktivitas siswa di mode tutor (join_kelas, baca_bagian_kedua, submit_jawaban).
+⚠️ Path parameter bernama :id (konsisten dengan route kelas lain).
+Response (200): (contoh nyata production)
+
+{
+  "ringkasan": {
+    "total_siswa": 17,
+    "rata_nilai": 0,
+    "materi_selesai": 0,
+    "perlu_perhatian": 1
+  },
+  "siswa": [
+    {
+      "siswa_id": 24,
+      "nama": "Davin",
+      "progress_materi": "0/20",
+      "persen_materi": 0,
+      "materi_selesai": 0,
+      "soal_dikerjakan": 4,
+      "nilai_rata": 25,
+      "aktivitas_terakhir": "2026-09-25T05:28:05Z",
+      "status": "perlu_perhatian"
+    },
+    {
+      "siswa_id": 25,
+      "nama": "Budi",
+      "progress_materi": "0/20",
+      "persen_materi": 0,
+      "materi_selesai": 0,
+      "soal_dikerjakan": 0,
+      "nilai_rata": 0,
+      "aktivitas_terakhir": "-",
+      "status": "belum_aktif"
+    }
+  ]
+}
+
+
+Field ringkasan:
+Field
+Tipe
+Keterangan
+total_siswa
+number
+Jumlah siswa di kelas
+rata_nilai
+number
+Rata-rata nilai_rata siswa yang sudah mengerjakan soal (0 jika belum ada)
+materi_selesai
+number
+Total materi selesai seluruh siswa
+perlu_perhatian
+number
+Jumlah siswa berstatus perlu_perhatian
+Field per object siswa[]:
+Field
+Tipe
+Keterangan
+siswa_id
+number
+ID siswa
+nama
+string
+Nama siswa
+progress_materi
+string
+"X/Y" — materi selesai / total materi kelas
+persen_materi
+number
+0–100
+materi_selesai
+number
+Jumlah materi yang selesai dibaca (via tutor baca_bagian_kedua)
+soal_dikerjakan
+number
+Jumlah baris jawaban di jawaban_siswas
+nilai_rata
+number
+Persen benar (0–100)
+aktivitas_terakhir
+string
+ISO datetime; "-" jika belum ada record progress
+status
+string
+Lihat tabel status
+Nilai status:
+Nilai
+Arti
+"aman"
+Ada aktivitas dan (nilai ≥ 60 atau belum ada soal)
+"perlu_perhatian"
+Sudah mengerjakan soal tapi nilai < 60
+"belum_aktif"
+Belum ada materi selesai dan belum ada soal dikerjakan
+Error (401 / 404):
+
+
+{ "error": "Token tidak valid atau kedaluwarsa", "code": "TOKEN_INVALID" }
+{ "error": "kelas tidak ditemukan atau Anda tidak memiliki akses" }
+
+
+
+
 ### I.3 Aturan wajib FE
 
 1. **Satu fetch per pesan** (`POST /chat`). Tidak ada stream/polling untuk tutor.
