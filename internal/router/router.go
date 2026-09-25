@@ -96,6 +96,9 @@ chatAuth.Use(middleware.UnifiedAuthMiddleware())
 		guruAuth := api.Group("")
 		guruAuth.Use(middleware.GuruAuthMiddleware())
 		{
+
+			guruAuth.GET("/guru/profile", guruHandler.GetProfile)
+    		guruAuth.PUT("/guru/profile", guruHandler.UpdateProfile)
 			// Modul
 			guruAuth.GET("/modul", modulHandler.GetAllModuls)
 			guruAuth.GET("/modul/:id", modulHandler.GetModulByID)
