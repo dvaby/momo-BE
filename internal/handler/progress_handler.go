@@ -17,7 +17,7 @@ func NewProgressHandler(svc *service.ProgressService) *ProgressHandler {
 
 // GetProgressKelas — GET /api/v1/kelas/:kelas_id/progress
 func (h *ProgressHandler) GetProgressKelas(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("kelas_id"), 10, 64)
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "kelas_id tidak valid"})
 		return
